@@ -38,7 +38,7 @@ const SobreNosotrosPage: React.FC = () => {
             name: "Felipe Monzón",
             role: "Co-Fundador y Director de Tecnología",
             description: "Apasionado por la tecnología y la sostenibilidad, Felipe lidera el desarrollo técnico de EcoGestión. Es el arquitecto detrás de la plataforma, el mapa interactivo y la integración de la IA para hacer del reciclaje una experiencia simple y accesible para todos.",
-            imageUrl: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?q=80&w=400&auto=format&fit=crop",
+            imageUrl: "https://cdn.discordapp.com/attachments/1435059807135596566/1436369292596609126/IMG_20241105_034503_464.webp?ex=690f5aa5&is=690e0925&hm=91cb6aa9d37c70f1c05a6c94aab911b3cc2c2711ae2b0235ba6f1dc5fbb05a52&",
             socials: {
                 linkedin: "https://www.linkedin.com/in/felipe-monzón-324349395",
                 instagram: "https://www.instagram.com/felipe._.071005/"
@@ -48,9 +48,9 @@ const SobreNosotrosPage: React.FC = () => {
             name: "Rolón Agustín",
             role: "Co-Fundador y Director de Comunidad",
             description: "Con un fuerte compromiso social y ambiental, Agustín es el corazón de la comunidad EcoGestión. Se encarga de la creación de contenido, la organización de eventos y la comunicación en redes sociales, fomentando un movimiento positivo y participativo en Formosa.",
-            imageUrl: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=400&auto=format&fit=crop",
+            imageUrl: "https://cdn.discordapp.com/attachments/1435059807135596566/1436414484511195196/5_WhatsApp_y_4_paginas_mas_-_Perfil_1__Microsoft_Edge_7_11_2025_14_57_25.png?ex=690f84bc&is=690e333c&hm=0800f080c0465a0caee5fd3fba492684454045755495a1159ff177a1dbd111f2&",
             socials: {
-                linkedin: "#",
+                linkedin: "https://www.linkedin.com/in/agust%C3%ADn-rol%C3%B3n-501270398/",
                 instagram: "https://www.instagram.com/agustin.r64?igsh=MTZhdDllMTk5amp4aA=="
             }
         }

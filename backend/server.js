@@ -9,7 +9,8 @@ const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 const app = express();
-const port = process.env.API_PORT || 3001;
+// Render asigna el puerto dinámicamente a través de la variable de entorno PORT
+const port = process.env.PORT || 3001;
 const saltRounds = 10;
 
 // --- Middlewares ---
@@ -34,69 +35,66 @@ if (process.env.EMAIL_SERVICE && process.env.EMAIL_USER && process.env.EMAIL_PAS
 
 // --- Database Initialization Logic ---
 const initializeDatabase = async () => {
+    let connection;
     try {
-        const connection = await db.getConnection();
-        console.log('✅ Conexión a la base de datos exitosa.');
+        connection = await db.getConnection();
+        console.log('✅ Conexión a la base de datos PostgreSQL exitosa.');
         
         // --- Users Table ---
         await connection.query(`
-            CREATE TABLE IF NOT EXISTS \`users\` (
-              \`id\` int(11) NOT NULL AUTO_INCREMENT,
-              \`name\` varchar(255) NOT NULL,
-              \`email\` varchar(255) NOT NULL,
-              \`password_hash\` varchar(255) NOT NULL,
-              \`points\` int(11) DEFAULT 0,
-              \`kg_recycled\` decimal(10,2) DEFAULT 0.00,
-              \`role\` enum('usuario','moderador','dueño') DEFAULT 'usuario',
-              \`unlocked_achievements\` text DEFAULT NULL,
-              \`stats\` text DEFAULT NULL,
-              \`last_login\` datetime DEFAULT NULL,
-              \`favorite_locations\` text DEFAULT NULL,
-              \`banner_url\` text DEFAULT NULL,
-              \`profile_picture_url\` text DEFAULT NULL,
-              \`title\` varchar(255) DEFAULT NULL,
-              \`bio\` text DEFAULT NULL,
-              \`socials\` text DEFAULT NULL,
-              PRIMARY KEY (\`id\`),
-              UNIQUE KEY \`email\` (\`email\`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            CREATE TABLE IF NOT EXISTS users (
+              id SERIAL PRIMARY KEY,
+              name VARCHAR(255) NOT NULL,
+              email VARCHAR(255) NOT NULL UNIQUE,
+              password_hash VARCHAR(255) NOT NULL,
+              points INT DEFAULT 0,
+              kg_recycled DECIMAL(10,2) DEFAULT 0.00,
+              role VARCHAR(20) CHECK (role IN ('usuario','moderador','dueño')) DEFAULT 'usuario',
+              unlocked_achievements TEXT DEFAULT NULL,
+              stats TEXT DEFAULT NULL,
+              last_login TIMESTAMP DEFAULT NULL,
+              favorite_locations TEXT DEFAULT NULL,
+              banner_url TEXT DEFAULT NULL,
+              profile_picture_url TEXT DEFAULT NULL,
+              title VARCHAR(255) DEFAULT NULL,
+              bio TEXT DEFAULT NULL,
+              socials TEXT DEFAULT NULL
+            );
         `);
         console.log('✅ Tabla "users" asegurada.');
 
         // --- Locations Table ---
         await connection.query(`
-             CREATE TABLE IF NOT EXISTS \`locations\` (
-              \`id\` VARCHAR(255) NOT NULL,
-              \`name\` VARCHAR(255) NOT NULL,
-              \`address\` VARCHAR(255) NOT NULL,
-              \`description\` TEXT,
-              \`hours\` VARCHAR(255),
-              \`schedule\` JSON,
-              \`materials\` JSON,
-              \`map_data\` JSON,
-              \`status\` ENUM('ok', 'reported', 'maintenance', 'serviced') NOT NULL DEFAULT 'ok',
-              \`last_serviced\` DATE,
-              \`check_ins\` INT DEFAULT 0,
-              \`image_urls\` JSON,
-              PRIMARY KEY (\`id\`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+             CREATE TABLE IF NOT EXISTS locations (
+              id VARCHAR(255) PRIMARY KEY,
+              name VARCHAR(255) NOT NULL,
+              address VARCHAR(255) NOT NULL,
+              description TEXT,
+              hours VARCHAR(255),
+              schedule JSONB,
+              materials JSONB,
+              map_data JSONB,
+              status VARCHAR(20) CHECK (status IN ('ok', 'reported', 'maintenance', 'serviced')) NOT NULL DEFAULT 'ok',
+              last_serviced DATE,
+              check_ins INT DEFAULT 0,
+              image_urls JSONB
+            );
         `);
         console.log('✅ Tabla "locations" asegurada.');
         
         // --- Impact Stats Table ---
         await connection.query(`
-            CREATE TABLE IF NOT EXISTS \`impact_stats\` (
-              \`id\` INT NOT NULL AUTO_INCREMENT,
-              \`recycled_kg\` INT NOT NULL DEFAULT 0,
-              \`participants\` INT NOT NULL DEFAULT 0,
-              \`points\` INT NOT NULL DEFAULT 0,
-              PRIMARY KEY (\`id\`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            CREATE TABLE IF NOT EXISTS impact_stats (
+              id SERIAL PRIMARY KEY,
+              recycled_kg INT NOT NULL DEFAULT 0,
+              participants INT NOT NULL DEFAULT 0,
+              points INT NOT NULL DEFAULT 0
+            );
         `);
         console.log('✅ Tabla "impact_stats" asegurada.');
-        const [statsRows] = await db.query('SELECT * FROM impact_stats WHERE id = 1');
+        const { rows: statsRows } = await db.query('SELECT * FROM impact_stats WHERE id = 1');
         if (statsRows.length === 0) {
-            await db.query(`INSERT INTO \`impact_stats\` (\`id\`, \`recycled_kg\`, \`participants\`, \`points\`) VALUES (1, 14800, 5350, 48);`);
+            await db.query(`INSERT INTO impact_stats (id, recycled_kg, participants, points) VALUES (1, 14800, 5350, 48);`);
             console.log('✅ Datos iniciales de estadísticas insertados.');
         } else {
             console.log('✅ Fila de estadísticas verificada.');
@@ -104,137 +102,119 @@ const initializeDatabase = async () => {
 
         // --- News Articles Table ---
         await connection.query(`
-            CREATE TABLE IF NOT EXISTS \`news_articles\` (
-              \`id\` int(11) NOT NULL AUTO_INCREMENT,
-              \`title\` varchar(255) NOT NULL,
-              \`category\` varchar(100) NOT NULL,
-              \`excerpt\` text NOT NULL,
-              \`image\` longtext DEFAULT NULL,
-              \`content\` longtext DEFAULT NULL,
-              \`featured\` tinyint(1) DEFAULT 0,
-              \`author_id\` int(11) DEFAULT NULL,
-              \`published_at\` timestamp NOT NULL DEFAULT current_timestamp(),
-              PRIMARY KEY (\`id\`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            CREATE TABLE IF NOT EXISTS news_articles (
+              id SERIAL PRIMARY KEY,
+              title VARCHAR(255) NOT NULL,
+              category VARCHAR(100) NOT NULL,
+              excerpt TEXT NOT NULL,
+              image TEXT DEFAULT NULL,
+              content TEXT DEFAULT NULL,
+              featured BOOLEAN DEFAULT FALSE,
+              author_id INT DEFAULT NULL,
+              published_at TIMESTAMP NOT NULL DEFAULT current_timestamp
+            );
         `);
         console.log('✅ Tabla "news_articles" asegurada.');
-
-        const dbName = process.env.DB_NAME || 'ecogestion_db';
-        const [columns] = await connection.query(`
-            SELECT COLUMN_NAME, DATA_TYPE 
-            FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'news_articles' 
-            AND COLUMN_NAME IN ('image', 'content')`,
-            [dbName]
-        );
-
-        for (const column of columns) {
-            if (column.DATA_TYPE.toLowerCase() !== 'longtext') {
-                console.warn(`⚠️  Columna "${column.COLUMN_NAME}" en "news_articles" tiene un tipo incorrecto (${column.DATA_TYPE}). Modificando a LONGTEXT...`);
-                await connection.query(`ALTER TABLE \`news_articles\` MODIFY COLUMN \`${column.COLUMN_NAME}\` LONGTEXT;`);
-                console.log(`✅  Columna "${column.COLUMN_NAME}" actualizada a LONGTEXT.`);
-            }
-        }
-        console.log('✅ Columnas de "news_articles" verificadas.');
         
         // --- Games Table ---
         await connection.query(`
-            CREATE TABLE IF NOT EXISTS \`games\` (
-              \`id\` int(11) NOT NULL AUTO_INCREMENT,
-              \`title\` varchar(255) NOT NULL,
-              \`category\` varchar(100) NOT NULL,
-              \`image\` varchar(255) NOT NULL,
-              \`type\` varchar(50) NOT NULL,
-              \`learningObjective\` text NOT NULL,
-              \`payload\` json DEFAULT NULL,
-              \`rating\` decimal(3,2) DEFAULT 3.50,
-              \`ratings_count\` int(11) DEFAULT 0,
-              PRIMARY KEY (\`id\`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            CREATE TABLE IF NOT EXISTS games (
+              id SERIAL PRIMARY KEY,
+              title VARCHAR(255) NOT NULL,
+              category VARCHAR(100) NOT NULL,
+              image VARCHAR(255) NOT NULL,
+              type VARCHAR(50) NOT NULL,
+              learningObjective TEXT NOT NULL,
+              payload JSONB DEFAULT NULL,
+              rating DECIMAL(3,2) DEFAULT 3.50,
+              ratings_count INT DEFAULT 0
+            );
         `);
         console.log('✅ Tabla "games" asegurada.');
         
-        const [gameRows] = await db.query('SELECT COUNT(*) as count FROM games');
-        if (gameRows[0].count === 0) {
+        const { rows: gameRows } = await db.query('SELECT COUNT(*) as count FROM games');
+        if (gameRows[0].count === '0') {
             console.log('⏳ La tabla "games" está vacía. Poblando con datos iniciales...');
-            const query = 'INSERT INTO games (id, title, category, image, type, learningObjective, payload, rating) VALUES ?';
-            const values = gamesData.map(g => [g.id, g.title, g.category, g.image, g.type, g.learningObjective, JSON.stringify(g.payload), g.rating]);
-            await connection.query(query, [values]);
-            console.log(`✅ ¡${gamesData.length} juegos insertados en la base de datos!`);
+            for (const g of gamesData) {
+                await connection.query(
+                    'INSERT INTO games (id, title, category, image, type, learningObjective, payload, rating) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (id) DO NOTHING',
+                    [g.id, g.title, g.category, g.image, g.type, g.learningObjective, JSON.stringify(g.payload), g.rating]
+                );
+            }
+            console.log(`✅ ¡${gamesData.length} juegos insertados/verificados en la base de datos!`);
         } else {
             console.log('✅ Tabla "games" verificada.');
         }
 
         // --- User Game Scores Table ---
         await connection.query(`
-             CREATE TABLE IF NOT EXISTS \`user_game_scores\` (
-              \`user_id\` int(11) NOT NULL,
-              \`game_id\` int(11) NOT NULL,
-              \`high_score\` int(11) NOT NULL DEFAULT 0,
-              PRIMARY KEY (\`user_id\`, \`game_id\`),
-              KEY \`game_id\` (\`game_id\`),
-              CONSTRAINT \`user_game_scores_ibfk_1\` FOREIGN KEY (\`user_id\`) REFERENCES \`users\` (\`id\`) ON DELETE CASCADE,
-              CONSTRAINT \`user_game_scores_ibfk_2\` FOREIGN KEY (\`game_id\`) REFERENCES \`games\` (\`id\`) ON DELETE CASCADE
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+             CREATE TABLE IF NOT EXISTS user_game_scores (
+              user_id INT NOT NULL,
+              game_id INT NOT NULL,
+              high_score INT NOT NULL DEFAULT 0,
+              PRIMARY KEY (user_id, game_id),
+              CONSTRAINT user_game_scores_user_id_fkey FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+              CONSTRAINT user_game_scores_game_id_fkey FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
+            );
         `);
+        await connection.query('CREATE INDEX IF NOT EXISTS idx_user_game_scores_game_id ON user_game_scores(game_id);');
         console.log('✅ Tabla "user_game_scores" asegurada.');
 
         // --- Reports Table ---
         await connection.query(`
-            CREATE TABLE IF NOT EXISTS \`reports\` (
-              \`id\` INT NOT NULL AUTO_INCREMENT,
-              \`location_id\` VARCHAR(255) NOT NULL,
-              \`user_id\` INT NOT NULL,
-              \`reason\` ENUM('full', 'dirty', 'damaged', 'other') NOT NULL,
-              \`comment\` TEXT,
-              \`image_url\` TEXT,
-              \`status\` ENUM('pending', 'resolved', 'dismissed') NOT NULL DEFAULT 'pending',
-              \`reported_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              PRIMARY KEY (\`id\`),
-              KEY \`location_id\` (\`location_id\`),
-              KEY \`user_id\` (\`user_id\`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            CREATE TABLE IF NOT EXISTS reports (
+              id SERIAL PRIMARY KEY,
+              location_id VARCHAR(255) NOT NULL,
+              user_id INT NOT NULL,
+              reason VARCHAR(20) CHECK (reason IN ('full', 'dirty', 'damaged', 'other')) NOT NULL,
+              comment TEXT,
+              image_url TEXT,
+              status VARCHAR(20) CHECK (status IN ('pending', 'resolved', 'dismissed')) NOT NULL DEFAULT 'pending',
+              reported_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
         `);
+        await connection.query('CREATE INDEX IF NOT EXISTS idx_reports_location_id ON reports(location_id);');
+        await connection.query('CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);');
         console.log('✅ Tabla "reports" asegurada.');
 
         // --- Contact Messages Table ---
         await connection.query(`
-            CREATE TABLE IF NOT EXISTS \`contact_messages\` (
-              \`id\` INT NOT NULL AUTO_INCREMENT,
-              \`name\` VARCHAR(255) NOT NULL,
-              \`email\` VARCHAR(255) NOT NULL,
-              \`subject\` VARCHAR(255) NOT NULL,
-              \`message\` TEXT NOT NULL,
-              \`status\` ENUM('unread', 'read', 'archived') NOT NULL DEFAULT 'unread',
-              \`submitted_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              PRIMARY KEY (\`id\`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            CREATE TABLE IF NOT EXISTS contact_messages (
+              id SERIAL PRIMARY KEY,
+              name VARCHAR(255) NOT NULL,
+              email VARCHAR(255) NOT NULL,
+              subject VARCHAR(255) NOT NULL,
+              message TEXT NOT NULL,
+              status VARCHAR(20) CHECK (status IN ('unread', 'read', 'archived')) NOT NULL DEFAULT 'unread',
+              submitted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
         `);
         console.log('✅ Tabla "contact_messages" asegurada.');
 
         // --- Community Messages Table ---
         await connection.query(`
-            CREATE TABLE IF NOT EXISTS \`community_messages\` (
-              \`id\` INT NOT NULL AUTO_INCREMENT,
-              \`channel_id\` INT NOT NULL,
-              \`user_id\` INT NOT NULL,
-              \`content\` TEXT NOT NULL,
-              \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              \`edited\` BOOLEAN DEFAULT FALSE,
-              \`reactions\` JSON,
-              \`replying_to_message_id\` INT DEFAULT NULL,
-              PRIMARY KEY (\`id\`),
-              KEY \`channel_id\` (\`channel_id\`),
-              KEY \`user_id\` (\`user_id\`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            CREATE TABLE IF NOT EXISTS community_messages (
+              id SERIAL PRIMARY KEY,
+              channel_id INT NOT NULL,
+              user_id INT NOT NULL,
+              content TEXT NOT NULL,
+              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              edited BOOLEAN DEFAULT FALSE,
+              reactions JSONB,
+              replying_to_message_id INT DEFAULT NULL
+            );
         `);
+        await connection.query('CREATE INDEX IF NOT EXISTS idx_community_messages_channel_id ON community_messages(channel_id);');
+        await connection.query('CREATE INDEX IF NOT EXISTS idx_community_messages_user_id ON community_messages(user_id);');
         console.log('✅ Tabla "community_messages" asegurada.');
-
-        connection.release();
 
     } catch (error) {
         console.error('❌ ERROR CRÍTICO durante la inicialización de la base de datos:', error);
         throw error;
+    } finally {
+        if (connection) {
+            connection.release();
+        }
     }
 };
 
@@ -286,7 +266,7 @@ app.post('/api/register', async (req, res) => {
         }
 
         console.log('[REGISTER] Verificando si el email ya existe en la DB...');
-        const [existingUsers] = await db.query('SELECT id FROM users WHERE email = ?', [email]);
+        const { rows: existingUsers } = await db.query('SELECT id FROM users WHERE email = $1', [email]);
         if (existingUsers.length > 0) {
             console.log(`[REGISTER] Error: El email ${email} ya está registrado.`);
             return res.status(409).json({ message: 'El email ya está registrado.' });
@@ -299,14 +279,15 @@ app.post('/api/register', async (req, res) => {
         const defaultStats = JSON.stringify({ messagesSent: 0, pointsVisited: 0, reportsMade: 0, dailyLogins: 1, completedQuizzes: [], quizzesCompleted: 0, gamesPlayed: 0, objectsIdentified: 0 });
         console.log('[REGISTER] Contraseña hasheada. Preparando para insertar en la DB...');
 
-        const [result] = await db.query(
-            'INSERT INTO users (name, email, password_hash, last_login, role, points, kg_recycled, stats) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [name, email, password_hash, last_login, 'usuario', 0, 0, defaultStats]
+        const result = await db.query(
+            'INSERT INTO users (name, email, password_hash, last_login, role, points, kg_recycled, stats) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+            ['usuario', 0, 0, defaultStats]
         );
-        console.log(`[REGISTER] ¡ÉXITO! Usuario insertado en la DB con ID: ${result.insertId}.`);
+        const newUserId = result.rows[0].id;
+        console.log(`[REGISTER] ¡ÉXITO! Usuario insertado en la DB con ID: ${newUserId}.`);
 
         console.log('[REGISTER] Obteniendo datos del nuevo usuario para devolver al frontend...');
-        const [newUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [result.insertId]);
+        const { rows: newUserRows } = await db.query('SELECT * FROM users WHERE id = $1', [newUserId]);
         console.log('[REGISTER] Usuario obtenido. Enviando respuesta 201 al frontend.');
         res.status(201).json(formatUserForFrontend(newUserRows[0]));
 
@@ -316,11 +297,6 @@ app.post('/api/register', async (req, res) => {
         console.error('----------------------------------------------------');
         console.error('Este es el error que impide guardar el usuario en la base de datos:');
         console.error(error);
-        console.error('----------------------------------------------------');
-        console.error('POSIBLES CAUSAS:');
-        console.error('1. La base de datos "ecogestion_db" no existe o no la creaste con el script SQL.');
-        console.error('2. La tabla "users" no existe o sus columnas tienen nombres diferentes a los esperados.');
-        console.error('3. Los datos en el archivo .env (DB_HOST, DB_USER, DB_PASSWORD, DB_NAME) son incorrectos.');
         console.error('----------------------------------------------------');
         res.status(500).json({ message: 'Error en el servidor. Revisa la consola del backend para más detalles.' });
     }
@@ -332,7 +308,7 @@ app.post('/api/login', async (req, res) => {
         const { email, password } = req.body;
         if (!email || !password) return res.status(400).json({ message: 'Email y contraseña son requeridos.' });
         
-        const [users] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+        const { rows: users } = await db.query('SELECT * FROM users WHERE email = $1', [email]);
         if (users.length === 0) {
             console.log(`[LOGIN] Fallo: Email no encontrado.`);
             return res.status(401).json({ message: 'Email o contraseña incorrectos.' });
@@ -346,11 +322,11 @@ app.post('/api/login', async (req, res) => {
         }
         
         console.log(`[LOGIN] Éxito: Usuario ${email} autenticado. Actualizando last_login...`);
-        await db.query('UPDATE users SET last_login = ? WHERE id = ?', [new Date(), dbUser.id]);
+        await db.query('UPDATE users SET last_login = $1 WHERE id = $2', [new Date(), dbUser.id]);
         
-        const [refetchedUser] = await db.query('SELECT * FROM users WHERE id = ?', [dbUser.id]);
+        const { rows: refetchedUserRows } = await db.query('SELECT * FROM users WHERE id = $1', [dbUser.id]);
 
-        res.status(200).json(formatUserForFrontend(refetchedUser[0]));
+        res.status(200).json(formatUserForFrontend(refetchedUserRows[0]));
     } catch (error) {
         console.error('[LOGIN] ERROR:', error);
         res.status(500).json({ message: 'Error en el servidor al iniciar sesión.' });
@@ -363,19 +339,20 @@ app.post('/api/user-action', async (req, res) => {
         const { userId, action, payload } = req.body;
         
         if (action === 'check_in' && payload?.locationId) {
-            await db.query('UPDATE locations SET check_ins = check_ins + 1 WHERE id = ?', [payload.locationId]);
+            await db.query('UPDATE locations SET check_ins = check_ins + 1 WHERE id = $1', [payload.locationId]);
         }
         
         if (action === 'complete_game' && payload?.gameId && payload?.score !== undefined) {
              await db.query(
                 `INSERT INTO user_game_scores (user_id, game_id, high_score) 
-                 VALUES (?, ?, ?) 
-                 ON DUPLICATE KEY UPDATE high_score = IF(VALUES(high_score) > high_score, VALUES(high_score), high_score)`,
+                 VALUES ($1, $2, $3) 
+                 ON CONFLICT (user_id, game_id) 
+                 DO UPDATE SET high_score = GREATEST(user_game_scores.high_score, EXCLUDED.high_score)`,
                 [userId, payload.gameId, payload.score]
             );
         }
 
-        const [userRows] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
+        const { rows: userRows } = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
         if (userRows.length === 0) return res.status(404).json({ message: 'Usuario no encontrado.' });
         
         const dbUser = userRows[0];
@@ -387,7 +364,7 @@ app.post('/api/user-action', async (req, res) => {
 
         // Persist changes to DB
         await db.query(
-            'UPDATE users SET points = ?, last_login = ?, stats = ?, unlocked_achievements = ? WHERE id = ?',
+            'UPDATE users SET points = $1, last_login = $2, stats = $3, unlocked_achievements = $4 WHERE id = $5',
             [
                 updatedUser.points,
                 updatedUser.last_login,
@@ -397,10 +374,10 @@ app.post('/api/user-action', async (req, res) => {
             ]
         );
         
-        const [refetchedUser] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
+        const { rows: refetchedUserRows } = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
 
         res.status(200).json({
-            updatedUser: formatUserForFrontend(refetchedUser[0]),
+            updatedUser: formatUserForFrontend(refetchedUserRows[0]),
             notifications
         });
 
@@ -422,19 +399,20 @@ app.put('/api/users/profile/:id', async (req, res) => {
         };
 
         const setClauses = [], values = [];
+        let paramIndex = 1;
         for (const key in fieldsToUpdate) {
             if (columnMapping[key]) {
-                setClauses.push(`${columnMapping[key]} = ?`);
+                setClauses.push(`${columnMapping[key]} = $${paramIndex++}`);
                 values.push(fieldsToUpdate[key]);
             }
         }
         if (setClauses.length === 0) return res.status(400).json({ message: 'Ninguno de los campos proporcionados es válido.' });
         
         values.push(id);
-        const sql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = ?`;
+        const sql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = $${paramIndex}`;
         await db.query(sql, values);
 
-        const [updatedUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
+        const { rows: updatedUserRows } = await db.query('SELECT * FROM users WHERE id = $1', [id]);
         if (updatedUserRows.length === 0) return res.status(404).json({ message: 'Usuario no encontrado después de la actualización.' });
         
         res.status(200).json(formatUserForFrontend(updatedUserRows[0]));
@@ -448,16 +426,16 @@ app.put('/api/users/favorites', async (req, res) => {
     try {
         const { userId, locationId } = req.body;
         
-        const [users] = await db.query('SELECT favorite_locations FROM users WHERE id = ?', [userId]);
+        const { rows: users } = await db.query('SELECT favorite_locations FROM users WHERE id = $1', [userId]);
         if (users.length === 0) return res.status(404).json({ message: 'Usuario no encontrado.' });
         
         let favorites = users[0].favorite_locations ? JSON.parse(users[0].favorite_locations) : [];
         const index = favorites.indexOf(locationId);
         if (index > -1) favorites.splice(index, 1); else favorites.push(locationId);
         
-        await db.query('UPDATE users SET favorite_locations = ? WHERE id = ?', [JSON.stringify(favorites), userId]);
+        await db.query('UPDATE users SET favorite_locations = $1 WHERE id = $2', [JSON.stringify(favorites), userId]);
 
-        const [updatedUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
+        const { rows: updatedUserRows } = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
         res.status(200).json(formatUserForFrontend(updatedUserRows[0]));
     } catch (error) {
         console.error('[UPDATE FAVORITES] ERROR:', error);
@@ -468,15 +446,15 @@ app.put('/api/users/favorites', async (req, res) => {
 // --- Puntos Verdes & Reports ---
 const updateLocationStatusAfterReportChange = async (locationId) => {
     try {
-        const [[{ pending_count }]] = await db.query(
-            'SELECT COUNT(*) as pending_count FROM reports WHERE location_id = ? AND status = "pending"',
-            [locationId]
+        const { rows: [{ pending_count }] } = await db.query(
+            'SELECT COUNT(*) as pending_count FROM reports WHERE location_id = $1 AND status = $2',
+            [locationId, 'pending']
         );
 
-        if (pending_count === 0) {
+        if (Number(pending_count) === 0) {
             console.log(`[Location Status] No hay reportes pendientes para ${locationId}. Actualizando a 'serviced'.`);
             await db.query(
-                "UPDATE locations SET status = 'serviced', last_serviced = NOW() WHERE id = ? AND status = 'reported'",
+                "UPDATE locations SET status = 'serviced', last_serviced = NOW() WHERE id = $1 AND status = 'reported'",
                 [locationId]
             );
         } else {
@@ -489,21 +467,16 @@ const updateLocationStatusAfterReportChange = async (locationId) => {
 
 app.get('/api/locations', async (req, res) => {
     try {
-        const [locations] = await db.query(`
+        const { rows: locations } = await db.query(`
             SELECT 
                 l.*, 
-                (SELECT COUNT(*) FROM reports WHERE location_id = l.id AND status = 'pending') as reportCount,
-                (SELECT reason FROM reports WHERE location_id = l.id AND status = 'pending' ORDER BY reported_at DESC LIMIT 1) as latestReportReason
+                (SELECT COUNT(*) FROM reports WHERE location_id = l.id AND status = 'pending') as "reportCount",
+                (SELECT reason FROM reports WHERE location_id = l.id AND status = 'pending' ORDER BY reported_at DESC LIMIT 1) as "latestReportReason"
             FROM locations l
         `);
         const formattedLocations = locations.map(loc => ({
             ...loc,
-            schedule: JSON.parse(loc.schedule || '[]'),
-            materials: JSON.parse(loc.materials || '[]'),
-            mapData: JSON.parse(loc.map_data || '{}'),
-            imageUrls: JSON.parse(loc.image_urls || '[]'),
-            lastServiced: loc.last_serviced ? new Date(loc.last_serviced).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-            reportCount: loc.reportCount || 0,
+            reportCount: Number(loc.reportCount) || 0,
             latestReportReason: loc.latestReportReason
         }));
         res.json(formattedLocations);
@@ -520,12 +493,11 @@ app.post('/api/locations', async (req, res) => {
         if (!newLocation.id || !newLocation.name || !newLocation.address) {
             return res.status(400).json({ message: 'ID, Nombre y Dirección son requeridos.' });
         }
-        const [result] = await db.query(
-            'INSERT INTO locations (id, name, address, description, hours, schedule, materials, map_data, status, last_serviced, check_ins, image_urls) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        const { rows: [insertedRow] } = await db.query(
+            'INSERT INTO locations (id, name, address, description, hours, schedule, materials, map_data, status, last_serviced, check_ins, image_urls) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *',
             [newLocation.id, newLocation.name, newLocation.address, newLocation.description, newLocation.hours, JSON.stringify(newLocation.schedule || []), JSON.stringify(newLocation.materials || []), JSON.stringify(newLocation.mapData || {}), newLocation.status || 'ok', newLocation.lastServiced || new Date(), 0, JSON.stringify(newLocation.imageUrls || [])]
         );
-        const [insertedRow] = await db.query('SELECT * FROM locations WHERE id = ?', [newLocation.id]);
-        res.status(201).json(insertedRow[0]);
+        res.status(201).json(insertedRow);
     } catch(error) {
         console.error("[CREATE LOCATION] ERROR:", error);
         res.status(500).json({ message: "Error al crear la ubicación." });
@@ -537,12 +509,11 @@ app.put('/api/locations/:id', async (req, res) => {
         const { id } = req.params;
         const updatedLocation = req.body;
         // ... validation ...
-        await db.query(
-            'UPDATE locations SET name = ?, address = ?, description = ?, hours = ?, schedule = ?, materials = ?, map_data = ?, status = ?, last_serviced = ?, image_urls = ? WHERE id = ?',
+        const { rows: [updatedRow] } = await db.query(
+            'UPDATE locations SET name = $1, address = $2, description = $3, hours = $4, schedule = $5, materials = $6, map_data = $7, status = $8, last_serviced = $9, image_urls = $10 WHERE id = $11 RETURNING *',
             [updatedLocation.name, updatedLocation.address, updatedLocation.description, updatedLocation.hours, JSON.stringify(updatedLocation.schedule), JSON.stringify(updatedLocation.materials), JSON.stringify(updatedLocation.mapData), updatedLocation.status, updatedLocation.lastServiced, JSON.stringify(updatedLocation.imageUrls), id]
         );
-        const [updatedRow] = await db.query('SELECT * FROM locations WHERE id = ?', [id]);
-        res.status(200).json(updatedRow[0]);
+        res.status(200).json(updatedRow);
     } catch(error) {
         console.error("[UPDATE LOCATION] ERROR:", error);
         res.status(500).json({ message: "Error al actualizar la ubicación." });
@@ -552,8 +523,8 @@ app.put('/api/locations/:id', async (req, res) => {
 app.delete('/api/locations/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        await db.query('DELETE FROM reports WHERE location_id = ?', [id]);
-        await db.query('DELETE FROM locations WHERE id = ?', [id]);
+        await db.query('DELETE FROM reports WHERE location_id = $1', [id]);
+        await db.query('DELETE FROM locations WHERE id = $1', [id]);
         res.status(200).json({ message: 'Ubicación eliminada.' });
     } catch(error) {
         console.error("[DELETE LOCATION] ERROR:", error);
@@ -565,12 +536,12 @@ app.post('/api/locations/report', async (req, res) => {
     try {
         const { locationId, userId, reason, comment, imageUrl } = req.body;
         await db.query(
-            'INSERT INTO reports (user_id, location_id, reason, comment, image_url) VALUES (?, ?, ?, ?, ?)',
+            'INSERT INTO reports (user_id, location_id, reason, comment, image_url) VALUES ($1, $2, $3, $4, $5)',
             [userId, locationId, reason, comment, imageUrl]
         );
-        await db.query("UPDATE locations SET status = 'reported' WHERE id = ?", [locationId]);
+        await db.query("UPDATE locations SET status = 'reported' WHERE id = $1", [locationId]);
         
-        const [updatedLocations] = await db.query('SELECT * FROM locations WHERE id = ?', [locationId]);
+        const { rows: updatedLocations } = await db.query('SELECT * FROM locations WHERE id = $1', [locationId]);
         res.status(201).json(updatedLocations[0]);
     } catch (error) {
         console.error("[REPORT LOCATION] ERROR:", error);
@@ -581,18 +552,8 @@ app.post('/api/locations/report', async (req, res) => {
 // --- News Management ---
 app.get('/api/news', async (req, res) => {
     try {
-        const [articles] = await db.query('SELECT * FROM news_articles ORDER BY published_at DESC, id DESC');
-        const formattedNews = articles.map(art => ({
-            id: art.id,
-            image: art.image,
-            category: art.category,
-            title: art.title,
-            date: new Date(art.published_at).toISOString().split('T')[0],
-            excerpt: art.excerpt,
-            content: JSON.parse(art.content || '[]'),
-            featured: !!art.featured
-        }));
-        res.json(formattedNews);
+        const { rows: articles } = await db.query('SELECT * FROM news_articles ORDER BY published_at DESC, id DESC');
+        res.json(articles);
     } catch (error) {
         console.error("[GET NEWS] ERROR:", error);
         res.status(500).json({ message: "Error al obtener las noticias." });
@@ -602,12 +563,12 @@ app.get('/api/news', async (req, res) => {
 app.post('/api/news', async (req, res) => {
     try {
         const { title, category, image, excerpt, content, featured, adminUserId } = req.body;
-        const [result] = await db.query(
+        const { rows: [newArticle] } = await db.query(
             `INSERT INTO news_articles (title, category, image, excerpt, content, featured, author_id, published_at) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW()) RETURNING id`,
             [title, category, image, excerpt, JSON.stringify(content), featured, adminUserId]
         );
-        res.status(201).json({ id: result.insertId, message: 'Noticia creada.' });
+        res.status(201).json({ id: newArticle.id, message: 'Noticia creada.' });
     } catch (error) {
         console.error("[CREATE NEWS] ERROR:", error);
         res.status(500).json({ message: "Error al crear la noticia." });
@@ -619,8 +580,8 @@ app.put('/api/news/:id', async (req, res) => {
         const { id } = req.params;
         const { title, category, image, excerpt, content, featured } = req.body;
         await db.query(
-            `UPDATE news_articles SET title = ?, category = ?, image = ?, excerpt = ?, content = ?, featured = ?
-             WHERE id = ?`,
+            `UPDATE news_articles SET title = $1, category = $2, image = $3, excerpt = $4, content = $5, featured = $6
+             WHERE id = $7`,
             [title, category, image, excerpt, JSON.stringify(content), featured, id]
         );
         res.status(200).json({ message: 'Noticia actualizada.' });
@@ -633,7 +594,7 @@ app.put('/api/news/:id', async (req, res) => {
 app.delete('/api/news/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        await db.query('DELETE FROM news_articles WHERE id = ?', [id]);
+        await db.query('DELETE FROM news_articles WHERE id = $1', [id]);
         res.status(200).json({ message: 'Noticia eliminada.' });
     } catch (error) {
         console.error("[DELETE NEWS] ERROR:", error);
@@ -647,26 +608,21 @@ app.get('/api/games', async (req, res) => {
         const { userId } = req.query;
         let games;
         if (userId) {
-            [games] = await db.query(
+            const result = await db.query(
                 `SELECT g.*, ugs.high_score 
                  FROM games g 
-                 LEFT JOIN user_game_scores ugs ON g.id = ugs.game_id AND ugs.user_id = ? 
+                 LEFT JOIN user_game_scores ugs ON g.id = ugs.game_id AND ugs.user_id = $1 
                  ORDER BY g.id ASC`, 
                 [userId]
             );
+            games = result.rows;
         } else {
-            [games] = await db.query('SELECT * FROM games ORDER BY id ASC');
+            const result = await db.query('SELECT * FROM games ORDER BY id ASC');
+            games = result.rows;
         }
 
         const formattedGames = games.map(g => ({
-            id: g.id,
-            title: g.title,
-            category: g.category,
-            image: g.image,
-            type: g.type,
-            learningObjective: g.learningObjective,
-            payload: JSON.parse(g.payload || '{}'),
-            rating: g.rating ? parseFloat(g.rating) : 3.5,
+            ...g,
             userHighScore: g.high_score !== null && g.high_score !== undefined ? g.high_score : 0,
         }));
         res.json(formattedGames);
@@ -679,11 +635,11 @@ app.get('/api/games', async (req, res) => {
 app.post('/api/games', async (req, res) => {
     try {
         const { title, category, image, type, learningObjective, payload } = req.body;
-        const [result] = await db.query(
-            `INSERT INTO games (title, category, image, type, learningObjective, payload) VALUES (?, ?, ?, ?, ?, ?)`,
+        const { rows: [newGame] } = await db.query(
+            `INSERT INTO games (title, category, image, type, learningObjective, payload) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
             [title, category, image, type, learningObjective, JSON.stringify(payload)]
         );
-        res.status(201).json({ id: result.insertId, message: 'Juego creado.' });
+        res.status(201).json({ id: newGame.id, message: 'Juego creado.' });
     } catch (error) {
         console.error('[CREATE GAME] ERROR:', error);
         res.status(500).json({ message: 'Error al crear el juego.' });
@@ -694,11 +650,11 @@ app.put('/api/games/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { title, category, image, type, learningObjective, payload } = req.body;
-        const [result] = await db.query(
-            `UPDATE games SET title = ?, category = ?, image = ?, type = ?, learningObjective = ?, payload = ? WHERE id = ?`,
+        const result = await db.query(
+            `UPDATE games SET title = $1, category = $2, image = $3, type = $4, learningObjective = $5, payload = $6 WHERE id = $7`,
             [title, category, image, type, learningObjective, JSON.stringify(payload), id]
         );
-        if (result.affectedRows === 0) return res.status(404).json({ message: 'Juego no encontrado.' });
+        if (result.rowCount === 0) return res.status(404).json({ message: 'Juego no encontrado.' });
         res.status(200).json({ message: 'Juego actualizado.' });
     } catch (error) {
         console.error('[UPDATE GAME] ERROR:', error);
@@ -709,9 +665,9 @@ app.put('/api/games/:id', async (req, res) => {
 app.delete('/api/games/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        await db.query('DELETE FROM user_game_scores WHERE game_id = ?', [id]);
-        const [result] = await db.query('DELETE FROM games WHERE id = ?', [id]);
-        if (result.affectedRows === 0) return res.status(404).json({ message: 'Juego no encontrado.' });
+        await db.query('DELETE FROM user_game_scores WHERE game_id = $1', [id]);
+        const result = await db.query('DELETE FROM games WHERE id = $1', [id]);
+        if (result.rowCount === 0) return res.status(404).json({ message: 'Juego no encontrado.' });
         res.status(200).json({ message: 'Juego eliminado.' });
     } catch (error) {
         console.error('[DELETE GAME] ERROR:', error);
@@ -735,7 +691,7 @@ const isAdmin = async (req, res, next) => {
     }
     if (userId) {
         try {
-            const [users] = await db.query('SELECT role FROM users WHERE id = ?', [userId]);
+            const { rows: users } = await db.query('SELECT role FROM users WHERE id = $1', [userId]);
             if (users.length > 0 && (users[0].role === 'dueño' || users[0].role === 'moderador')) {
                 return next();
             }
@@ -775,7 +731,7 @@ app.delete('/api/community/channels/:id', isAdmin, async (req, res) => {
     communityChannels.splice(channelIndex, 1);
     
     try {
-        await db.query('DELETE FROM community_messages WHERE channel_id = ?', [channelId]);
+        await db.query('DELETE FROM community_messages WHERE channel_id = $1', [channelId]);
     } catch(error) {
         console.error(`[DELETE CHANNEL MESSAGES] Error:`, error);
     }
@@ -785,7 +741,7 @@ app.delete('/api/community/channels/:id', isAdmin, async (req, res) => {
 
 app.get('/api/community/members', async (req, res) => {
      try {
-        const [members] = await db.query("SELECT id, name, profile_picture_url, role FROM users ORDER BY name");
+        const { rows: members } = await db.query("SELECT id, name, profile_picture_url, role FROM users ORDER BY name");
         const formattedMembers = members.map(m => ({
             id: m.id.toString(),
             name: m.name,
@@ -802,24 +758,24 @@ app.get('/api/community/members', async (req, res) => {
 app.get('/api/community/messages/:channelId', async (req, res) => {
     try {
         const { channelId } = req.params;
-        const [messages] = await db.query(
+        const { rows: messages } = await db.query(
             `SELECT 
                 m.id, m.user_id, m.content, m.created_at, m.edited, m.reactions, m.replying_to_message_id,
                 u.name as user, u.profile_picture_url as avatarUrl
              FROM community_messages m 
              JOIN users u ON m.user_id = u.id 
-             WHERE m.channel_id = ? 
+             WHERE m.channel_id = $1 
              ORDER BY m.created_at ASC`, [channelId]
         );
         
         const replyIds = messages.map(m => m.replying_to_message_id).filter(id => id);
         let repliesMap = {};
         if (replyIds.length > 0) {
-            const [replyMessages] = await db.query(
+            const { rows: replyMessages } = await db.query(
                 `SELECT m.id, m.content, u.name as user 
                  FROM community_messages m 
                  JOIN users u ON m.user_id = u.id 
-                 WHERE m.id IN (?)`, [replyIds]
+                 WHERE m.id = ANY($1::int[])`, [replyIds]
             );
             repliesMap = replyMessages.reduce((acc, reply) => {
                 acc[reply.id] = { messageId: reply.id, user: reply.user, text: reply.content };
@@ -835,7 +791,7 @@ app.get('/api/community/messages/:channelId', async (req, res) => {
             timestamp: msg.created_at,
             text: msg.content,
             edited: msg.edited,
-            reactions: msg.reactions ? JSON.parse(msg.reactions) : {},
+            reactions: msg.reactions || {},
             replyingTo: msg.replying_to_message_id ? repliesMap[msg.replying_to_message_id] : null
         }));
         
@@ -850,7 +806,7 @@ app.post('/api/community/messages', async (req, res) => {
      try {
         const { channelId, userId, content, replyingToId } = req.body;
         await db.query(
-            'INSERT INTO community_messages (channel_id, user_id, content, replying_to_message_id) VALUES (?, ?, ?, ?)',
+            'INSERT INTO community_messages (channel_id, user_id, content, replying_to_message_id) VALUES ($1, $2, $3, $4)',
             [channelId, userId, content, replyingToId || null]
         );
         res.status(201).json({ message: 'Mensaje enviado.' });
@@ -865,7 +821,7 @@ app.put('/api/community/messages/:messageId', async (req, res) => {
         const { messageId } = req.params;
         const { content, userId, userRole } = req.body;
         
-        const [messages] = await db.query('SELECT user_id FROM community_messages WHERE id = ?', [messageId]);
+        const { rows: messages } = await db.query('SELECT user_id FROM community_messages WHERE id = $1', [messageId]);
         if (messages.length === 0) return res.status(404).json({ message: 'Mensaje no encontrado.' });
 
         const messageAuthorId = messages[0].user_id.toString();
@@ -874,7 +830,7 @@ app.put('/api/community/messages/:messageId', async (req, res) => {
         }
         
         await db.query(
-            'UPDATE community_messages SET content = ?, edited = true WHERE id = ?',
+            'UPDATE community_messages SET content = $1, edited = true WHERE id = $2',
             [content, messageId]
         );
         res.status(200).json({ message: 'Mensaje actualizado.' });
@@ -889,7 +845,7 @@ app.delete('/api/community/messages/:messageId', async (req, res) => {
         const { messageId } = req.params;
         const { userId, userRole } = req.body;
         
-        const [messages] = await db.query('SELECT user_id FROM community_messages WHERE id = ?', [messageId]);
+        const { rows: messages } = await db.query('SELECT user_id FROM community_messages WHERE id = $1', [messageId]);
         if (messages.length === 0) return res.status(404).json({ message: 'Mensaje no encontrado.' });
 
         const messageAuthorId = messages[0].user_id.toString();
@@ -897,7 +853,7 @@ app.delete('/api/community/messages/:messageId', async (req, res) => {
             return res.status(403).json({ message: 'No tienes permiso para eliminar este mensaje.' });
         }
         
-        await db.query('DELETE FROM community_messages WHERE id = ?', [messageId]);
+        await db.query('DELETE FROM community_messages WHERE id = $1', [messageId]);
         res.status(200).json({ message: 'Mensaje eliminado.' });
     } catch (error) {
         console.error("[DELETE MESSAGE] ERROR:", error);
@@ -910,10 +866,10 @@ app.post('/api/community/messages/:messageId/react', async (req, res) => {
         const { messageId } = req.params;
         const { userName, emoji } = req.body;
 
-        const [messages] = await db.query('SELECT reactions FROM community_messages WHERE id = ?', [messageId]);
+        const { rows: messages } = await db.query('SELECT reactions FROM community_messages WHERE id = $1', [messageId]);
         if (messages.length === 0) return res.status(404).json({ message: 'Mensaje no encontrado.' });
 
-        let reactions = messages[0].reactions ? JSON.parse(messages[0].reactions) : {};
+        let reactions = messages[0].reactions || {};
 
         if (!reactions[emoji]) {
             reactions[emoji] = [];
@@ -930,7 +886,7 @@ app.post('/api/community/messages/:messageId/react', async (req, res) => {
         }
 
         await db.query(
-            'UPDATE community_messages SET reactions = ? WHERE id = ?',
+            'UPDATE community_messages SET reactions = $1 WHERE id = $2',
             [JSON.stringify(reactions), messageId]
         );
         res.status(200).json({ message: 'Reacción actualizada.' });
@@ -955,7 +911,7 @@ const authAdmin = async (req, res, requiredRole) => {
         return false;
     }
     try {
-        const [admins] = await db.query('SELECT role FROM users WHERE id = ?', [adminUserId]);
+        const { rows: admins } = await db.query('SELECT role FROM users WHERE id = $1', [adminUserId]);
         if (admins.length === 0 || !checkAdminRole(admins[0].role, requiredRole)) {
             res.status(403).json({ message: 'Acceso denegado.' });
             return false;
@@ -970,7 +926,7 @@ const authAdmin = async (req, res, requiredRole) => {
 app.get('/api/admin/users', async (req, res) => {
     if (!await authAdmin(req, res, 'dueño')) return;
     try {
-        const [users] = await db.query('SELECT * FROM users ORDER BY name ASC');
+        const { rows: users } = await db.query('SELECT * FROM users ORDER BY name ASC');
         res.json(users.map(formatUserForFrontend));
     } catch (error) {
         res.status(500).json({ message: 'Error al obtener usuarios.' });
@@ -980,7 +936,7 @@ app.get('/api/admin/users', async (req, res) => {
 app.get('/api/admin/users/:id', async (req, res) => {
     if (!await authAdmin(req, res, 'dueño')) return;
     try {
-        const [users] = await db.query('SELECT * FROM users WHERE id = ?', [req.params.id]);
+        const { rows: users } = await db.query('SELECT * FROM users WHERE id = $1', [req.params.id]);
         if(users.length === 0) return res.status(404).json({message: 'Usuario no encontrado'});
         res.json(formatUserForFrontend(users[0]));
     } catch(error) {
@@ -993,8 +949,8 @@ app.put('/api/admin/users/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { name, role, points } = req.body;
-        await db.query('UPDATE users SET name = ?, role = ?, points = ? WHERE id = ?', [name, role, points, id]);
-        const [updatedUsers] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
+        await db.query('UPDATE users SET name = $1, role = $2, points = $3 WHERE id = $4', [name, role, points, id]);
+        const { rows: updatedUsers } = await db.query('SELECT * FROM users WHERE id = $1', [id]);
         if (updatedUsers.length === 0) return res.status(404).json({ message: 'User not found after update.' });
         res.status(200).json(formatUserForFrontend(updatedUsers[0]));
     } catch (error) {
@@ -1006,11 +962,9 @@ app.delete('/api/admin/users/:id', async (req, res) => {
     if (!await authAdmin(req, res, 'dueño')) return;
     try {
         const { id } = req.params;
-        // The DB schema for user_game_scores has ON DELETE CASCADE, so they will be auto-deleted.
-        // For other tables, we might need manual cleanup if not set up with cascades.
-        await db.query('DELETE FROM community_messages WHERE user_id = ?', [id]);
-        await db.query('DELETE FROM reports WHERE user_id = ?', [id]);
-        await db.query('DELETE FROM users WHERE id = ?', [id]);
+        await db.query('DELETE FROM community_messages WHERE user_id = $1', [id]);
+        await db.query('DELETE FROM reports WHERE user_id = $1', [id]);
+        await db.query('DELETE FROM users WHERE id = $1', [id]);
         res.status(200).json({ message: 'Usuario eliminado permanentemente.' });
     } catch (error) {
         console.error("[DELETE USER] ERROR:", error);
@@ -1023,7 +977,7 @@ app.put('/api/admin/users/:id/achievements', async (req, res) => {
     try {
         const { id } = req.params;
         const { achievementId, unlocked } = req.body;
-        const [users] = await db.query('SELECT unlocked_achievements FROM users WHERE id = ?', [id]);
+        const { rows: users } = await db.query('SELECT unlocked_achievements FROM users WHERE id = $1', [id]);
         if (users.length === 0) return res.status(404).json({ message: 'Usuario no encontrado.' });
         
         let unlockedIds = new Set(users[0].unlocked_achievements ? JSON.parse(users[0].unlocked_achievements) : []);
@@ -1033,9 +987,9 @@ app.put('/api/admin/users/:id/achievements', async (req, res) => {
             unlockedIds.delete(String(achievementId));
         }
         
-        await db.query('UPDATE users SET unlocked_achievements = ? WHERE id = ?', [JSON.stringify(Array.from(unlockedIds)), id]);
+        await db.query('UPDATE users SET unlocked_achievements = $1 WHERE id = $2', [JSON.stringify(Array.from(unlockedIds)), id]);
         
-        const [updatedUsers] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
+        const { rows: updatedUsers } = await db.query('SELECT * FROM users WHERE id = $1', [id]);
         if (updatedUsers.length === 0) return res.status(404).json({ message: 'User not found after update.' });
         res.status(200).json(formatUserForFrontend(updatedUsers[0]));
 
@@ -1051,7 +1005,7 @@ app.post('/api/contact', async (req, res) => {
         const { name, email, subject, message } = req.body;
         console.log(`[CONTACT] Nuevo mensaje de ${name} (${email}). Asunto: ${subject}`);
         await db.query(
-            'INSERT INTO contact_messages (name, email, subject, message) VALUES (?, ?, ?, ?)',
+            'INSERT INTO contact_messages (name, email, subject, message) VALUES ($1, $2, $3, $4)',
             [name, email, subject, message]
         );
         console.log('[CONTACT] Mensaje guardado en la DB.');
@@ -1064,7 +1018,7 @@ app.post('/api/contact', async (req, res) => {
 
 app.get('/api/admin/messages', async (req, res) => {
     try {
-        const [messages] = await db.query('SELECT * FROM contact_messages ORDER BY submitted_at DESC');
+        const { rows: messages } = await db.query('SELECT * FROM contact_messages ORDER BY submitted_at DESC');
         res.json(messages);
     } catch (error) {
         console.error("[GET ADMIN MESSAGES] ERROR:", error);
@@ -1076,8 +1030,8 @@ app.put('/api/admin/messages/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
-        await db.query('UPDATE contact_messages SET status = ? WHERE id = ?', [status, id]);
-        const [updatedMessages] = await db.query('SELECT * FROM contact_messages WHERE id = ?', [id]);
+        await db.query('UPDATE contact_messages SET status = $1 WHERE id = $2', [status, id]);
+        const { rows: updatedMessages } = await db.query('SELECT * FROM contact_messages WHERE id = $1', [id]);
         if (updatedMessages.length === 0) return res.status(404).json({ message: 'Message not found after update.' });
         res.status(200).json(updatedMessages[0]);
     } catch (error) {
@@ -1089,7 +1043,7 @@ app.delete('/api/admin/messages/:id', async (req, res) => {
     if (!await authAdmin(req, res, 'moderador')) return;
     try {
         const { id } = req.params;
-        await db.query('DELETE FROM contact_messages WHERE id = ?', [id]);
+        await db.query('DELETE FROM contact_messages WHERE id = $1', [id]);
         res.status(200).json({ message: 'Mensaje eliminado.' });
     } catch (error) {
         res.status(500).json({ message: 'Error al eliminar el mensaje.' });
@@ -1099,8 +1053,8 @@ app.delete('/api/admin/messages/:id', async (req, res) => {
 app.get('/api/admin/reports', async (req, res) => {
     if (!await authAdmin(req, res, 'moderador')) return;
     try {
-        const [reports] = await db.query(
-            `SELECT r.*, u.name as userName, u.email as userEmail, l.name as locationName 
+        const { rows: reports } = await db.query(
+            `SELECT r.*, u.name as "userName", u.email as "userEmail", l.name as "locationName" 
              FROM reports r JOIN users u ON r.user_id = u.id 
              JOIN locations l ON r.location_id = l.id 
              ORDER BY r.reported_at DESC`
@@ -1117,21 +1071,21 @@ app.put('/api/admin/reports/:id', async (req, res) => {
         const { id } = req.params;
         const { status } = req.body;
         
-        const [reports] = await db.query('SELECT location_id FROM reports WHERE id = ?', [id]);
+        const { rows: reports } = await db.query('SELECT location_id FROM reports WHERE id = $1', [id]);
         if (reports.length === 0) return res.status(404).json({ message: 'Reporte no encontrado.' });
         const { location_id } = reports[0];
         
-        await db.query('UPDATE reports SET status = ? WHERE id = ?', [status, id]);
+        await db.query('UPDATE reports SET status = $1 WHERE id = $2', [status, id]);
 
         if (status === 'resolved' || status === 'dismissed') {
             await updateLocationStatusAfterReportChange(location_id);
         }
 
-        const [updatedReports] = await db.query(
-            `SELECT r.*, u.name as userName, u.email as userEmail, l.name as locationName 
+        const { rows: updatedReports } = await db.query(
+            `SELECT r.*, u.name as "userName", u.email as "userEmail", l.name as "locationName" 
              FROM reports r JOIN users u ON r.user_id = u.id 
              JOIN locations l ON r.location_id = l.id 
-             WHERE r.id = ?`,
+             WHERE r.id = $1`,
             [id]
         );
         if (updatedReports.length === 0) return res.status(404).json({ message: 'Report not found after update.' });
@@ -1145,11 +1099,11 @@ app.delete('/api/admin/reports/:id', async (req, res) => {
     if (!await authAdmin(req, res, 'moderador')) return;
     try {
         const { id } = req.params;
-        const [reports] = await db.query('SELECT location_id FROM reports WHERE id = ?', [id]);
+        const { rows: reports } = await db.query('SELECT location_id FROM reports WHERE id = $1', [id]);
         if (reports.length === 0) return res.status(404).json({ message: 'Reporte no encontrado.' });
         const { location_id } = reports[0];
 
-        await db.query('DELETE FROM reports WHERE id = ?', [id]);
+        await db.query('DELETE FROM reports WHERE id = $1', [id]);
         await updateLocationStatusAfterReportChange(location_id);
         
         res.status(200).json({ message: 'Reporte eliminado.' });
@@ -1199,11 +1153,6 @@ app.post('/api/admin/reply', async (req, res) => {
         console.error('----------------------------------------------------');
         console.error(error);
         console.error('----------------------------------------------------');
-        console.error('POSIBLES CAUSAS:');
-        console.error('1. Las credenciales en .env (EMAIL_SERVICE, EMAIL_USER, EMAIL_PASS) son incorrectas.');
-        console.error('2. El servicio de email (ej. Gmail, SendGrid) está bloqueando la conexión. Puede requerir "verificación en dos pasos" o una "contraseña de aplicación".');
-        console.error('3. Hay un problema de red o firewall.');
-        console.error('----------------------------------------------------');
         res.status(500).json({ message: 'Error en el servidor al enviar el email. Revisa la consola del backend.' });
     }
 });
@@ -1212,12 +1161,12 @@ app.post('/api/admin/reply', async (req, res) => {
 // --- Impact Stats Endpoints ---
 app.get('/api/impact-stats', async (req, res) => {
     try {
-        const [rows] = await db.query('SELECT * FROM impact_stats WHERE id = 1');
+        const { rows } = await db.query('SELECT * FROM impact_stats WHERE id = 1');
         
         if (rows.length === 0) {
             console.warn("[GET IMPACT STATS] Fila no encontrada. Creando...");
-            await db.query(`INSERT INTO \`impact_stats\` (\`id\`, \`recycled_kg\`, \`participants\`, \`points\`) VALUES (1, 14800, 5350, 48) ON DUPLICATE KEY UPDATE id=1;`);
-            const [newRows] = await db.query('SELECT * FROM impact_stats WHERE id = 1');
+            await db.query(`INSERT INTO impact_stats (id, recycled_kg, participants, points) VALUES (1, 14800, 5350, 48) ON CONFLICT (id) DO NOTHING;`);
+            const { rows: newRows } = await db.query('SELECT * FROM impact_stats WHERE id = 1');
             res.json({ recycledKg: newRows[0].recycled_kg, participants: newRows[0].participants, points: newRows[0].points });
             return;
         }
@@ -1242,12 +1191,12 @@ app.put('/api/impact-stats', async (req, res) => {
         if (recycledKg === undefined || participants === undefined || points === undefined) {
             return res.status(400).json({ message: 'Todos los campos de estadísticas son requeridos.' });
         }
-        const [result] = await db.query(
-            'UPDATE impact_stats SET recycled_kg = ?, participants = ?, points = ? WHERE id = 1',
+        const result = await db.query(
+            'UPDATE impact_stats SET recycled_kg = $1, participants = $2, points = $3 WHERE id = 1',
             [recycledKg, participants, points]
         );
 
-        if (result.affectedRows === 0) {
+        if (result.rowCount === 0) {
             throw new Error("La fila de estadísticas no se encontró en la base de datos para actualizar. Intenta reiniciar el servidor.");
         }
 
