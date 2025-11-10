@@ -9,7 +9,6 @@ const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 const app = express();
-// Render asigna el puerto dinámicamente a través de la variable de entorno PORT
 const port = process.env.PORT || 3001;
 const saltRounds = 10;
 
@@ -38,21 +37,21 @@ const initializeDatabase = async () => {
     let connection;
     try {
         connection = await db.getConnection();
-        console.log('✅ Conexión a la base de datos PostgreSQL exitosa.');
+        console.log('✅ Conexión a la base de datos MySQL exitosa.');
         
-        // --- Users Table ---
+        // --- Users Table (MySQL Syntax with ENUM) ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS users (
-              id SERIAL PRIMARY KEY,
+              id INT AUTO_INCREMENT PRIMARY KEY,
               name VARCHAR(255) NOT NULL,
               email VARCHAR(255) NOT NULL UNIQUE,
               password_hash VARCHAR(255) NOT NULL,
               points INT DEFAULT 0,
               kg_recycled DECIMAL(10,2) DEFAULT 0.00,
-              role VARCHAR(20) CHECK (role IN ('usuario','moderador','dueño')) DEFAULT 'usuario',
+              role ENUM('usuario','moderador','dueño') DEFAULT 'usuario',
               unlocked_achievements TEXT DEFAULT NULL,
               stats TEXT DEFAULT NULL,
-              last_login TIMESTAMP DEFAULT NULL,
+              last_login TIMESTAMP NULL,
               favorite_locations TEXT DEFAULT NULL,
               banner_url TEXT DEFAULT NULL,
               profile_picture_url TEXT DEFAULT NULL,
@@ -63,7 +62,7 @@ const initializeDatabase = async () => {
         `);
         console.log('✅ Tabla "users" asegurada.');
 
-        // --- Locations Table ---
+        // --- Locations Table (MySQL Syntax with ENUM) ---
         await connection.query(`
              CREATE TABLE IF NOT EXISTS locations (
               id VARCHAR(255) PRIMARY KEY,
@@ -71,28 +70,28 @@ const initializeDatabase = async () => {
               address VARCHAR(255) NOT NULL,
               description TEXT,
               hours VARCHAR(255),
-              schedule JSONB,
-              materials JSONB,
-              map_data JSONB,
-              status VARCHAR(20) CHECK (status IN ('ok', 'reported', 'maintenance', 'serviced')) NOT NULL DEFAULT 'ok',
+              schedule JSON,
+              materials JSON,
+              map_data JSON,
+              status ENUM('ok', 'reported', 'maintenance', 'serviced') NOT NULL DEFAULT 'ok',
               last_serviced DATE,
               check_ins INT DEFAULT 0,
-              image_urls JSONB
+              image_urls JSON
             );
         `);
         console.log('✅ Tabla "locations" asegurada.');
         
-        // --- Impact Stats Table ---
+        // --- Impact Stats Table (MySQL Syntax) ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS impact_stats (
-              id SERIAL PRIMARY KEY,
+              id INT AUTO_INCREMENT PRIMARY KEY,
               recycled_kg INT NOT NULL DEFAULT 0,
               participants INT NOT NULL DEFAULT 0,
               points INT NOT NULL DEFAULT 0
             );
         `);
         console.log('✅ Tabla "impact_stats" asegurada.');
-        const { rows: statsRows } = await db.query('SELECT * FROM impact_stats WHERE id = 1');
+        const [statsRows] = await db.query('SELECT * FROM impact_stats WHERE id = 1');
         if (statsRows.length === 0) {
             await db.query(`INSERT INTO impact_stats (id, recycled_kg, participants, points) VALUES (1, 14800, 5350, 48);`);
             console.log('✅ Datos iniciales de estadísticas insertados.');
@@ -100,10 +99,10 @@ const initializeDatabase = async () => {
             console.log('✅ Fila de estadísticas verificada.');
         }
 
-        // --- News Articles Table ---
+        // --- News Articles Table (MySQL Syntax) ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS news_articles (
-              id SERIAL PRIMARY KEY,
+              id INT AUTO_INCREMENT PRIMARY KEY,
               title VARCHAR(255) NOT NULL,
               category VARCHAR(100) NOT NULL,
               excerpt TEXT NOT NULL,
@@ -116,28 +115,28 @@ const initializeDatabase = async () => {
         `);
         console.log('✅ Tabla "news_articles" asegurada.');
         
-        // --- Games Table ---
+        // --- Games Table (MySQL Syntax) ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS games (
-              id SERIAL PRIMARY KEY,
+              id INT AUTO_INCREMENT PRIMARY KEY,
               title VARCHAR(255) NOT NULL,
               category VARCHAR(100) NOT NULL,
               image VARCHAR(255) NOT NULL,
               type VARCHAR(50) NOT NULL,
               learningObjective TEXT NOT NULL,
-              payload JSONB DEFAULT NULL,
+              payload JSON DEFAULT NULL,
               rating DECIMAL(3,2) DEFAULT 3.50,
               ratings_count INT DEFAULT 0
             );
         `);
         console.log('✅ Tabla "games" asegurada.');
         
-        const { rows: gameRows } = await db.query('SELECT COUNT(*) as count FROM games');
-        if (gameRows[0].count === '0') {
+        const [gameRows] = await db.query('SELECT COUNT(*) as count FROM games');
+        if (gameRows[0].count === 0) {
             console.log('⏳ La tabla "games" está vacía. Poblando con datos iniciales...');
             for (const g of gamesData) {
                 await connection.query(
-                    'INSERT INTO games (id, title, category, image, type, learningObjective, payload, rating) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (id) DO NOTHING',
+                    'INSERT IGNORE INTO games (id, title, category, image, type, learningObjective, payload, rating) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                     [g.id, g.title, g.category, g.image, g.type, g.learningObjective, JSON.stringify(g.payload), g.rating]
                 );
             }
@@ -146,66 +145,66 @@ const initializeDatabase = async () => {
             console.log('✅ Tabla "games" verificada.');
         }
 
-        // --- User Game Scores Table ---
+        // --- User Game Scores Table (MySQL Syntax with Index) ---
         await connection.query(`
              CREATE TABLE IF NOT EXISTS user_game_scores (
               user_id INT NOT NULL,
               game_id INT NOT NULL,
               high_score INT NOT NULL DEFAULT 0,
               PRIMARY KEY (user_id, game_id),
+              INDEX idx_user_game_scores_game_id (game_id),
               CONSTRAINT user_game_scores_user_id_fkey FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
               CONSTRAINT user_game_scores_game_id_fkey FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
             );
         `);
-        await connection.query('CREATE INDEX IF NOT EXISTS idx_user_game_scores_game_id ON user_game_scores(game_id);');
         console.log('✅ Tabla "user_game_scores" asegurada.');
 
-        // --- Reports Table ---
+        // --- Reports Table (MySQL Syntax with ENUM and Indexes) ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS reports (
-              id SERIAL PRIMARY KEY,
+              id INT AUTO_INCREMENT PRIMARY KEY,
               location_id VARCHAR(255) NOT NULL,
               user_id INT NOT NULL,
-              reason VARCHAR(20) CHECK (reason IN ('full', 'dirty', 'damaged', 'other')) NOT NULL,
+              reason ENUM('full', 'dirty', 'damaged', 'other') NOT NULL,
               comment TEXT,
               image_url TEXT,
-              status VARCHAR(20) CHECK (status IN ('pending', 'resolved', 'dismissed')) NOT NULL DEFAULT 'pending',
-              reported_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+              status ENUM('pending', 'resolved', 'dismissed') NOT NULL DEFAULT 'pending',
+              reported_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              INDEX idx_reports_location_id (location_id),
+              INDEX idx_reports_user_id (user_id)
             );
         `);
-        await connection.query('CREATE INDEX IF NOT EXISTS idx_reports_location_id ON reports(location_id);');
-        await connection.query('CREATE INDEX IF NOT EXISTS idx_reports_user_id ON reports(user_id);');
         console.log('✅ Tabla "reports" asegurada.');
 
-        // --- Contact Messages Table ---
+        // --- Contact Messages Table (MySQL Syntax with ENUM) ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS contact_messages (
-              id SERIAL PRIMARY KEY,
+              id INT AUTO_INCREMENT PRIMARY KEY,
               name VARCHAR(255) NOT NULL,
               email VARCHAR(255) NOT NULL,
               subject VARCHAR(255) NOT NULL,
               message TEXT NOT NULL,
-              status VARCHAR(20) CHECK (status IN ('unread', 'read', 'archived')) NOT NULL DEFAULT 'unread',
+              status ENUM('unread', 'read', 'archived') NOT NULL DEFAULT 'unread',
               submitted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
         `);
         console.log('✅ Tabla "contact_messages" asegurada.');
 
-        // --- Community Messages Table ---
+        // --- Community Messages Table (MySQL Syntax with Indexes) ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS community_messages (
-              id SERIAL PRIMARY KEY,
+              id INT AUTO_INCREMENT PRIMARY KEY,
               channel_id INT NOT NULL,
               user_id INT NOT NULL,
               content TEXT NOT NULL,
               created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
               edited BOOLEAN DEFAULT FALSE,
-              reactions JSONB,
-              replying_to_message_id INT DEFAULT NULL
+              reactions JSON,
+              replying_to_message_id INT DEFAULT NULL,
+              INDEX idx_community_messages_channel_id (channel_id),
+              INDEX idx_community_messages_user_id (user_id)
             );
         `);
-        await connection.query('CREATE INDEX IF NOT EXISTS idx_community_messages_channel_id ON community_messages(channel_id);');
-        await connection.query('CREATE INDEX IF NOT EXISTS idx_community_messages_user_id ON community_messages(user_id);');
         console.log('✅ Tabla "community_messages" asegurada.');
 
     } catch (error) {
@@ -218,12 +217,25 @@ const initializeDatabase = async () => {
     }
 };
 
-// --- Helper to format user for frontend ---
+// --- Helper Functions ---
+const parseJsonField = (field) => {
+    if (!field) return null;
+    if (typeof field === 'string') {
+        try {
+            return JSON.parse(field);
+        } catch (e) {
+            console.error('Error parsing JSON field:', field, e);
+            return null; // Return null on parsing error
+        }
+    }
+    return field; // Already an object/array
+};
+
 const formatUserForFrontend = (dbUser) => {
     if (!dbUser) return null;
     const { allAchievements } = require('./data/achievementsData');
     
-    const unlockedIds = new Set(dbUser.unlocked_achievements ? JSON.parse(dbUser.unlocked_achievements) : []);
+    const unlockedIds = new Set(parseJsonField(dbUser.unlocked_achievements) || []);
     
     const userAchievements = allAchievements.map(ach => ({
         ...ach,
@@ -238,14 +250,14 @@ const formatUserForFrontend = (dbUser) => {
         kgRecycled: parseFloat(dbUser.kg_recycled),
         role: dbUser.role,
         achievements: userAchievements,
-        favoriteLocations: dbUser.favorite_locations ? JSON.parse(dbUser.favorite_locations) : [],
+        favoriteLocations: parseJsonField(dbUser.favorite_locations) || [],
         lastLogin: dbUser.last_login ? new Date(dbUser.last_login).toISOString().split('T')[0] : null,
         bannerUrl: dbUser.banner_url,
         profilePictureUrl: dbUser.profile_picture_url,
         title: dbUser.title,
         bio: dbUser.bio,
-        socials: dbUser.socials ? JSON.parse(dbUser.socials) : {},
-        stats: dbUser.stats ? JSON.parse(dbUser.stats) : {
+        socials: parseJsonField(dbUser.socials) || {},
+        stats: parseJsonField(dbUser.stats) || {
             messagesSent: 0, pointsVisited: 0, reportsMade: 0, dailyLogins: 0, completedQuizzes: [], quizzesCompleted: 0, gamesPlayed: 0, objectsIdentified: 0
         },
     };
@@ -266,7 +278,7 @@ app.post('/api/register', async (req, res) => {
         }
 
         console.log('[REGISTER] Verificando si el email ya existe en la DB...');
-        const { rows: existingUsers } = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+        const [existingUsers] = await db.query('SELECT id FROM users WHERE email = ?', [email]);
         if (existingUsers.length > 0) {
             console.log(`[REGISTER] Error: El email ${email} ya está registrado.`);
             return res.status(409).json({ message: 'El email ya está registrado.' });
@@ -279,15 +291,15 @@ app.post('/api/register', async (req, res) => {
         const defaultStats = JSON.stringify({ messagesSent: 0, pointsVisited: 0, reportsMade: 0, dailyLogins: 1, completedQuizzes: [], quizzesCompleted: 0, gamesPlayed: 0, objectsIdentified: 0 });
         console.log('[REGISTER] Contraseña hasheada. Preparando para insertar en la DB...');
 
-        const result = await db.query(
-            'INSERT INTO users (name, email, password_hash, last_login, role, points, kg_recycled, stats) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
-            ['usuario', 0, 0, defaultStats]
+        const [result] = await db.query(
+            'INSERT INTO users (name, email, password_hash, last_login, role, points, kg_recycled, stats) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [name, email, password_hash, last_login, 'usuario', 0, 0, defaultStats]
         );
-        const newUserId = result.rows[0].id;
+        const newUserId = result.insertId;
         console.log(`[REGISTER] ¡ÉXITO! Usuario insertado en la DB con ID: ${newUserId}.`);
 
         console.log('[REGISTER] Obteniendo datos del nuevo usuario para devolver al frontend...');
-        const { rows: newUserRows } = await db.query('SELECT * FROM users WHERE id = $1', [newUserId]);
+        const [newUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [newUserId]);
         console.log('[REGISTER] Usuario obtenido. Enviando respuesta 201 al frontend.');
         res.status(201).json(formatUserForFrontend(newUserRows[0]));
 
@@ -308,7 +320,7 @@ app.post('/api/login', async (req, res) => {
         const { email, password } = req.body;
         if (!email || !password) return res.status(400).json({ message: 'Email y contraseña son requeridos.' });
         
-        const { rows: users } = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+        const [users] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
         if (users.length === 0) {
             console.log(`[LOGIN] Fallo: Email no encontrado.`);
             return res.status(401).json({ message: 'Email o contraseña incorrectos.' });
@@ -322,9 +334,9 @@ app.post('/api/login', async (req, res) => {
         }
         
         console.log(`[LOGIN] Éxito: Usuario ${email} autenticado. Actualizando last_login...`);
-        await db.query('UPDATE users SET last_login = $1 WHERE id = $2', [new Date(), dbUser.id]);
+        await db.query('UPDATE users SET last_login = ? WHERE id = ?', [new Date(), dbUser.id]);
         
-        const { rows: refetchedUserRows } = await db.query('SELECT * FROM users WHERE id = $1', [dbUser.id]);
+        const [refetchedUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [dbUser.id]);
 
         res.status(200).json(formatUserForFrontend(refetchedUserRows[0]));
     } catch (error) {
@@ -339,32 +351,31 @@ app.post('/api/user-action', async (req, res) => {
         const { userId, action, payload } = req.body;
         
         if (action === 'check_in' && payload?.locationId) {
-            await db.query('UPDATE locations SET check_ins = check_ins + 1 WHERE id = $1', [payload.locationId]);
+            await db.query('UPDATE locations SET check_ins = check_ins + 1 WHERE id = ?', [payload.locationId]);
         }
         
         if (action === 'complete_game' && payload?.gameId && payload?.score !== undefined) {
              await db.query(
                 `INSERT INTO user_game_scores (user_id, game_id, high_score) 
-                 VALUES ($1, $2, $3) 
-                 ON CONFLICT (user_id, game_id) 
-                 DO UPDATE SET high_score = GREATEST(user_game_scores.high_score, EXCLUDED.high_score)`,
+                 VALUES (?, ?, ?) 
+                 ON DUPLICATE KEY UPDATE high_score = GREATEST(high_score, VALUES(high_score))`,
                 [userId, payload.gameId, payload.score]
             );
         }
 
-        const { rows: userRows } = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
+        const [userRows] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
         if (userRows.length === 0) return res.status(404).json({ message: 'Usuario no encontrado.' });
         
         const dbUser = userRows[0];
         // Parse JSON fields for the service
-        dbUser.stats = dbUser.stats ? JSON.parse(dbUser.stats) : {};
-        dbUser.unlocked_achievements = dbUser.unlocked_achievements ? JSON.parse(dbUser.unlocked_achievements) : [];
+        dbUser.stats = parseJsonField(dbUser.stats) || {};
+        dbUser.unlocked_achievements = parseJsonField(dbUser.unlocked_achievements) || [];
 
         const { updatedUser, notifications } = processAction(dbUser, action, payload);
 
         // Persist changes to DB
         await db.query(
-            'UPDATE users SET points = $1, last_login = $2, stats = $3, unlocked_achievements = $4 WHERE id = $5',
+            'UPDATE users SET points = ?, last_login = ?, stats = ?, unlocked_achievements = ? WHERE id = ?',
             [
                 updatedUser.points,
                 updatedUser.last_login,
@@ -374,7 +385,7 @@ app.post('/api/user-action', async (req, res) => {
             ]
         );
         
-        const { rows: refetchedUserRows } = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
+        const [refetchedUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
 
         res.status(200).json({
             updatedUser: formatUserForFrontend(refetchedUserRows[0]),
@@ -399,20 +410,19 @@ app.put('/api/users/profile/:id', async (req, res) => {
         };
 
         const setClauses = [], values = [];
-        let paramIndex = 1;
         for (const key in fieldsToUpdate) {
             if (columnMapping[key]) {
-                setClauses.push(`${columnMapping[key]} = $${paramIndex++}`);
+                setClauses.push(`${columnMapping[key]} = ?`);
                 values.push(fieldsToUpdate[key]);
             }
         }
         if (setClauses.length === 0) return res.status(400).json({ message: 'Ninguno de los campos proporcionados es válido.' });
         
         values.push(id);
-        const sql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = $${paramIndex}`;
+        const sql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = ?`;
         await db.query(sql, values);
 
-        const { rows: updatedUserRows } = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+        const [updatedUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
         if (updatedUserRows.length === 0) return res.status(404).json({ message: 'Usuario no encontrado después de la actualización.' });
         
         res.status(200).json(formatUserForFrontend(updatedUserRows[0]));
@@ -426,16 +436,16 @@ app.put('/api/users/favorites', async (req, res) => {
     try {
         const { userId, locationId } = req.body;
         
-        const { rows: users } = await db.query('SELECT favorite_locations FROM users WHERE id = $1', [userId]);
+        const [users] = await db.query('SELECT favorite_locations FROM users WHERE id = ?', [userId]);
         if (users.length === 0) return res.status(404).json({ message: 'Usuario no encontrado.' });
         
-        let favorites = users[0].favorite_locations ? JSON.parse(users[0].favorite_locations) : [];
+        let favorites = parseJsonField(users[0].favorite_locations) || [];
         const index = favorites.indexOf(locationId);
         if (index > -1) favorites.splice(index, 1); else favorites.push(locationId);
         
-        await db.query('UPDATE users SET favorite_locations = $1 WHERE id = $2', [JSON.stringify(favorites), userId]);
+        await db.query('UPDATE users SET favorite_locations = ? WHERE id = ?', [JSON.stringify(favorites), userId]);
 
-        const { rows: updatedUserRows } = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
+        const [updatedUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
         res.status(200).json(formatUserForFrontend(updatedUserRows[0]));
     } catch (error) {
         console.error('[UPDATE FAVORITES] ERROR:', error);
@@ -446,15 +456,15 @@ app.put('/api/users/favorites', async (req, res) => {
 // --- Puntos Verdes & Reports ---
 const updateLocationStatusAfterReportChange = async (locationId) => {
     try {
-        const { rows: [{ pending_count }] } = await db.query(
-            'SELECT COUNT(*) as pending_count FROM reports WHERE location_id = $1 AND status = $2',
+        const [[{ pending_count }]] = await db.query(
+            'SELECT COUNT(*) as pending_count FROM reports WHERE location_id = ? AND status = ?',
             [locationId, 'pending']
         );
 
         if (Number(pending_count) === 0) {
             console.log(`[Location Status] No hay reportes pendientes para ${locationId}. Actualizando a 'serviced'.`);
             await db.query(
-                "UPDATE locations SET status = 'serviced', last_serviced = NOW() WHERE id = $1 AND status = 'reported'",
+                "UPDATE locations SET status = 'serviced', last_serviced = NOW() WHERE id = ? AND status = 'reported'",
                 [locationId]
             );
         } else {
@@ -467,15 +477,19 @@ const updateLocationStatusAfterReportChange = async (locationId) => {
 
 app.get('/api/locations', async (req, res) => {
     try {
-        const { rows: locations } = await db.query(`
+        const [locations] = await db.query(`
             SELECT 
                 l.*, 
-                (SELECT COUNT(*) FROM reports WHERE location_id = l.id AND status = 'pending') as "reportCount",
-                (SELECT reason FROM reports WHERE location_id = l.id AND status = 'pending' ORDER BY reported_at DESC LIMIT 1) as "latestReportReason"
+                (SELECT COUNT(*) FROM reports WHERE location_id = l.id AND status = 'pending') as reportCount,
+                (SELECT reason FROM reports WHERE location_id = l.id AND status = 'pending' ORDER BY reported_at DESC LIMIT 1) as latestReportReason
             FROM locations l
         `);
         const formattedLocations = locations.map(loc => ({
             ...loc,
+            schedule: parseJsonField(loc.schedule) || [],
+            materials: parseJsonField(loc.materials) || [],
+            map_data: parseJsonField(loc.map_data) || {},
+            image_urls: parseJsonField(loc.image_urls) || [],
             reportCount: Number(loc.reportCount) || 0,
             latestReportReason: loc.latestReportReason
         }));
@@ -493,11 +507,12 @@ app.post('/api/locations', async (req, res) => {
         if (!newLocation.id || !newLocation.name || !newLocation.address) {
             return res.status(400).json({ message: 'ID, Nombre y Dirección son requeridos.' });
         }
-        const { rows: [insertedRow] } = await db.query(
-            'INSERT INTO locations (id, name, address, description, hours, schedule, materials, map_data, status, last_serviced, check_ins, image_urls) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *',
+        const [result] = await db.query(
+            'INSERT INTO locations (id, name, address, description, hours, schedule, materials, map_data, status, last_serviced, check_ins, image_urls) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [newLocation.id, newLocation.name, newLocation.address, newLocation.description, newLocation.hours, JSON.stringify(newLocation.schedule || []), JSON.stringify(newLocation.materials || []), JSON.stringify(newLocation.mapData || {}), newLocation.status || 'ok', newLocation.lastServiced || new Date(), 0, JSON.stringify(newLocation.imageUrls || [])]
         );
-        res.status(201).json(insertedRow);
+        const [insertedRow] = await db.query('SELECT * FROM locations WHERE id = ?', [newLocation.id]);
+        res.status(201).json(insertedRow[0]);
     } catch(error) {
         console.error("[CREATE LOCATION] ERROR:", error);
         res.status(500).json({ message: "Error al crear la ubicación." });
@@ -509,11 +524,12 @@ app.put('/api/locations/:id', async (req, res) => {
         const { id } = req.params;
         const updatedLocation = req.body;
         // ... validation ...
-        const { rows: [updatedRow] } = await db.query(
-            'UPDATE locations SET name = $1, address = $2, description = $3, hours = $4, schedule = $5, materials = $6, map_data = $7, status = $8, last_serviced = $9, image_urls = $10 WHERE id = $11 RETURNING *',
+        await db.query(
+            'UPDATE locations SET name = ?, address = ?, description = ?, hours = ?, schedule = ?, materials = ?, map_data = ?, status = ?, last_serviced = ?, image_urls = ? WHERE id = ?',
             [updatedLocation.name, updatedLocation.address, updatedLocation.description, updatedLocation.hours, JSON.stringify(updatedLocation.schedule), JSON.stringify(updatedLocation.materials), JSON.stringify(updatedLocation.mapData), updatedLocation.status, updatedLocation.lastServiced, JSON.stringify(updatedLocation.imageUrls), id]
         );
-        res.status(200).json(updatedRow);
+        const [updatedRow] = await db.query('SELECT * FROM locations WHERE id = ?', [id]);
+        res.status(200).json(updatedRow[0]);
     } catch(error) {
         console.error("[UPDATE LOCATION] ERROR:", error);
         res.status(500).json({ message: "Error al actualizar la ubicación." });
@@ -523,8 +539,8 @@ app.put('/api/locations/:id', async (req, res) => {
 app.delete('/api/locations/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        await db.query('DELETE FROM reports WHERE location_id = $1', [id]);
-        await db.query('DELETE FROM locations WHERE id = $1', [id]);
+        await db.query('DELETE FROM reports WHERE location_id = ?', [id]);
+        await db.query('DELETE FROM locations WHERE id = ?', [id]);
         res.status(200).json({ message: 'Ubicación eliminada.' });
     } catch(error) {
         console.error("[DELETE LOCATION] ERROR:", error);
@@ -536,12 +552,12 @@ app.post('/api/locations/report', async (req, res) => {
     try {
         const { locationId, userId, reason, comment, imageUrl } = req.body;
         await db.query(
-            'INSERT INTO reports (user_id, location_id, reason, comment, image_url) VALUES ($1, $2, $3, $4, $5)',
+            'INSERT INTO reports (user_id, location_id, reason, comment, image_url) VALUES (?, ?, ?, ?, ?)',
             [userId, locationId, reason, comment, imageUrl]
         );
-        await db.query("UPDATE locations SET status = 'reported' WHERE id = $1", [locationId]);
+        await db.query("UPDATE locations SET status = 'reported' WHERE id = ?", [locationId]);
         
-        const { rows: updatedLocations } = await db.query('SELECT * FROM locations WHERE id = $1', [locationId]);
+        const [updatedLocations] = await db.query('SELECT * FROM locations WHERE id = ?', [locationId]);
         res.status(201).json(updatedLocations[0]);
     } catch (error) {
         console.error("[REPORT LOCATION] ERROR:", error);
@@ -552,8 +568,16 @@ app.post('/api/locations/report', async (req, res) => {
 // --- News Management ---
 app.get('/api/news', async (req, res) => {
     try {
-        const { rows: articles } = await db.query('SELECT * FROM news_articles ORDER BY published_at DESC, id DESC');
-        res.json(articles);
+        const [articles] = await db.query('SELECT * FROM news_articles ORDER BY published_at DESC, id DESC');
+        const formattedArticles = articles.map(article => {
+            const articleDate = new Date(article.published_at);
+            return {
+                ...article,
+                date: !isNaN(articleDate.getTime()) ? articleDate.toISOString().split('T')[0] : null,
+                content: parseJsonField(article.content) || [],
+            };
+        });
+        res.json(formattedArticles);
     } catch (error) {
         console.error("[GET NEWS] ERROR:", error);
         res.status(500).json({ message: "Error al obtener las noticias." });
@@ -563,12 +587,12 @@ app.get('/api/news', async (req, res) => {
 app.post('/api/news', async (req, res) => {
     try {
         const { title, category, image, excerpt, content, featured, adminUserId } = req.body;
-        const { rows: [newArticle] } = await db.query(
+        const [result] = await db.query(
             `INSERT INTO news_articles (title, category, image, excerpt, content, featured, author_id, published_at) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW()) RETURNING id`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
             [title, category, image, excerpt, JSON.stringify(content), featured, adminUserId]
         );
-        res.status(201).json({ id: newArticle.id, message: 'Noticia creada.' });
+        res.status(201).json({ id: result.insertId, message: 'Noticia creada.' });
     } catch (error) {
         console.error("[CREATE NEWS] ERROR:", error);
         res.status(500).json({ message: "Error al crear la noticia." });
@@ -580,8 +604,8 @@ app.put('/api/news/:id', async (req, res) => {
         const { id } = req.params;
         const { title, category, image, excerpt, content, featured } = req.body;
         await db.query(
-            `UPDATE news_articles SET title = $1, category = $2, image = $3, excerpt = $4, content = $5, featured = $6
-             WHERE id = $7`,
+            `UPDATE news_articles SET title = ?, category = ?, image = ?, excerpt = ?, content = ?, featured = ?
+             WHERE id = ?`,
             [title, category, image, excerpt, JSON.stringify(content), featured, id]
         );
         res.status(200).json({ message: 'Noticia actualizada.' });
@@ -594,7 +618,7 @@ app.put('/api/news/:id', async (req, res) => {
 app.delete('/api/news/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        await db.query('DELETE FROM news_articles WHERE id = $1', [id]);
+        await db.query('DELETE FROM news_articles WHERE id = ?', [id]);
         res.status(200).json({ message: 'Noticia eliminada.' });
     } catch (error) {
         console.error("[DELETE NEWS] ERROR:", error);
@@ -608,21 +632,22 @@ app.get('/api/games', async (req, res) => {
         const { userId } = req.query;
         let games;
         if (userId) {
-            const result = await db.query(
+            const [result] = await db.query(
                 `SELECT g.*, ugs.high_score 
                  FROM games g 
-                 LEFT JOIN user_game_scores ugs ON g.id = ugs.game_id AND ugs.user_id = $1 
+                 LEFT JOIN user_game_scores ugs ON g.id = ugs.game_id AND ugs.user_id = ? 
                  ORDER BY g.id ASC`, 
                 [userId]
             );
-            games = result.rows;
+            games = result;
         } else {
-            const result = await db.query('SELECT * FROM games ORDER BY id ASC');
-            games = result.rows;
+            const [result] = await db.query('SELECT * FROM games ORDER BY id ASC');
+            games = result;
         }
 
         const formattedGames = games.map(g => ({
             ...g,
+            payload: parseJsonField(g.payload) || {},
             userHighScore: g.high_score !== null && g.high_score !== undefined ? g.high_score : 0,
         }));
         res.json(formattedGames);
@@ -635,11 +660,11 @@ app.get('/api/games', async (req, res) => {
 app.post('/api/games', async (req, res) => {
     try {
         const { title, category, image, type, learningObjective, payload } = req.body;
-        const { rows: [newGame] } = await db.query(
-            `INSERT INTO games (title, category, image, type, learningObjective, payload) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        const [result] = await db.query(
+            `INSERT INTO games (title, category, image, type, learningObjective, payload) VALUES (?, ?, ?, ?, ?, ?)`,
             [title, category, image, type, learningObjective, JSON.stringify(payload)]
         );
-        res.status(201).json({ id: newGame.id, message: 'Juego creado.' });
+        res.status(201).json({ id: result.insertId, message: 'Juego creado.' });
     } catch (error) {
         console.error('[CREATE GAME] ERROR:', error);
         res.status(500).json({ message: 'Error al crear el juego.' });
@@ -650,11 +675,11 @@ app.put('/api/games/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { title, category, image, type, learningObjective, payload } = req.body;
-        const result = await db.query(
-            `UPDATE games SET title = $1, category = $2, image = $3, type = $4, learningObjective = $5, payload = $6 WHERE id = $7`,
+        const [result] = await db.query(
+            `UPDATE games SET title = ?, category = ?, image = ?, type = ?, learningObjective = ?, payload = ? WHERE id = ?`,
             [title, category, image, type, learningObjective, JSON.stringify(payload), id]
         );
-        if (result.rowCount === 0) return res.status(404).json({ message: 'Juego no encontrado.' });
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Juego no encontrado.' });
         res.status(200).json({ message: 'Juego actualizado.' });
     } catch (error) {
         console.error('[UPDATE GAME] ERROR:', error);
@@ -665,9 +690,9 @@ app.put('/api/games/:id', async (req, res) => {
 app.delete('/api/games/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        await db.query('DELETE FROM user_game_scores WHERE game_id = $1', [id]);
-        const result = await db.query('DELETE FROM games WHERE id = $1', [id]);
-        if (result.rowCount === 0) return res.status(404).json({ message: 'Juego no encontrado.' });
+        await db.query('DELETE FROM user_game_scores WHERE game_id = ?', [id]);
+        const [result] = await db.query('DELETE FROM games WHERE id = ?', [id]);
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Juego no encontrado.' });
         res.status(200).json({ message: 'Juego eliminado.' });
     } catch (error) {
         console.error('[DELETE GAME] ERROR:', error);
@@ -691,7 +716,7 @@ const isAdmin = async (req, res, next) => {
     }
     if (userId) {
         try {
-            const { rows: users } = await db.query('SELECT role FROM users WHERE id = $1', [userId]);
+            const [users] = await db.query('SELECT role FROM users WHERE id = ?', [userId]);
             if (users.length > 0 && (users[0].role === 'dueño' || users[0].role === 'moderador')) {
                 return next();
             }
@@ -731,7 +756,7 @@ app.delete('/api/community/channels/:id', isAdmin, async (req, res) => {
     communityChannels.splice(channelIndex, 1);
     
     try {
-        await db.query('DELETE FROM community_messages WHERE channel_id = $1', [channelId]);
+        await db.query('DELETE FROM community_messages WHERE channel_id = ?', [channelId]);
     } catch(error) {
         console.error(`[DELETE CHANNEL MESSAGES] Error:`, error);
     }
@@ -741,7 +766,7 @@ app.delete('/api/community/channels/:id', isAdmin, async (req, res) => {
 
 app.get('/api/community/members', async (req, res) => {
      try {
-        const { rows: members } = await db.query("SELECT id, name, profile_picture_url, role FROM users ORDER BY name");
+        const [members] = await db.query("SELECT id, name, profile_picture_url, role FROM users ORDER BY name");
         const formattedMembers = members.map(m => ({
             id: m.id.toString(),
             name: m.name,
@@ -758,24 +783,24 @@ app.get('/api/community/members', async (req, res) => {
 app.get('/api/community/messages/:channelId', async (req, res) => {
     try {
         const { channelId } = req.params;
-        const { rows: messages } = await db.query(
+        const [messages] = await db.query(
             `SELECT 
                 m.id, m.user_id, m.content, m.created_at, m.edited, m.reactions, m.replying_to_message_id,
                 u.name as user, u.profile_picture_url as avatarUrl
              FROM community_messages m 
              JOIN users u ON m.user_id = u.id 
-             WHERE m.channel_id = $1 
+             WHERE m.channel_id = ? 
              ORDER BY m.created_at ASC`, [channelId]
         );
         
         const replyIds = messages.map(m => m.replying_to_message_id).filter(id => id);
         let repliesMap = {};
         if (replyIds.length > 0) {
-            const { rows: replyMessages } = await db.query(
+            const [replyMessages] = await db.query(
                 `SELECT m.id, m.content, u.name as user 
                  FROM community_messages m 
                  JOIN users u ON m.user_id = u.id 
-                 WHERE m.id = ANY($1::int[])`, [replyIds]
+                 WHERE m.id IN (?)`, [replyIds]
             );
             repliesMap = replyMessages.reduce((acc, reply) => {
                 acc[reply.id] = { messageId: reply.id, user: reply.user, text: reply.content };
@@ -791,7 +816,7 @@ app.get('/api/community/messages/:channelId', async (req, res) => {
             timestamp: msg.created_at,
             text: msg.content,
             edited: msg.edited,
-            reactions: msg.reactions || {},
+            reactions: parseJsonField(msg.reactions) || {},
             replyingTo: msg.replying_to_message_id ? repliesMap[msg.replying_to_message_id] : null
         }));
         
@@ -806,7 +831,7 @@ app.post('/api/community/messages', async (req, res) => {
      try {
         const { channelId, userId, content, replyingToId } = req.body;
         await db.query(
-            'INSERT INTO community_messages (channel_id, user_id, content, replying_to_message_id) VALUES ($1, $2, $3, $4)',
+            'INSERT INTO community_messages (channel_id, user_id, content, replying_to_message_id) VALUES (?, ?, ?, ?)',
             [channelId, userId, content, replyingToId || null]
         );
         res.status(201).json({ message: 'Mensaje enviado.' });
@@ -821,7 +846,7 @@ app.put('/api/community/messages/:messageId', async (req, res) => {
         const { messageId } = req.params;
         const { content, userId, userRole } = req.body;
         
-        const { rows: messages } = await db.query('SELECT user_id FROM community_messages WHERE id = $1', [messageId]);
+        const [messages] = await db.query('SELECT user_id FROM community_messages WHERE id = ?', [messageId]);
         if (messages.length === 0) return res.status(404).json({ message: 'Mensaje no encontrado.' });
 
         const messageAuthorId = messages[0].user_id.toString();
@@ -830,7 +855,7 @@ app.put('/api/community/messages/:messageId', async (req, res) => {
         }
         
         await db.query(
-            'UPDATE community_messages SET content = $1, edited = true WHERE id = $2',
+            'UPDATE community_messages SET content = ?, edited = true WHERE id = ?',
             [content, messageId]
         );
         res.status(200).json({ message: 'Mensaje actualizado.' });
@@ -845,7 +870,7 @@ app.delete('/api/community/messages/:messageId', async (req, res) => {
         const { messageId } = req.params;
         const { userId, userRole } = req.body;
         
-        const { rows: messages } = await db.query('SELECT user_id FROM community_messages WHERE id = $1', [messageId]);
+        const [messages] = await db.query('SELECT user_id FROM community_messages WHERE id = ?', [messageId]);
         if (messages.length === 0) return res.status(404).json({ message: 'Mensaje no encontrado.' });
 
         const messageAuthorId = messages[0].user_id.toString();
@@ -853,7 +878,7 @@ app.delete('/api/community/messages/:messageId', async (req, res) => {
             return res.status(403).json({ message: 'No tienes permiso para eliminar este mensaje.' });
         }
         
-        await db.query('DELETE FROM community_messages WHERE id = $1', [messageId]);
+        await db.query('DELETE FROM community_messages WHERE id = ?', [messageId]);
         res.status(200).json({ message: 'Mensaje eliminado.' });
     } catch (error) {
         console.error("[DELETE MESSAGE] ERROR:", error);
@@ -866,10 +891,10 @@ app.post('/api/community/messages/:messageId/react', async (req, res) => {
         const { messageId } = req.params;
         const { userName, emoji } = req.body;
 
-        const { rows: messages } = await db.query('SELECT reactions FROM community_messages WHERE id = $1', [messageId]);
+        const [messages] = await db.query('SELECT reactions FROM community_messages WHERE id = ?', [messageId]);
         if (messages.length === 0) return res.status(404).json({ message: 'Mensaje no encontrado.' });
 
-        let reactions = messages[0].reactions || {};
+        let reactions = parseJsonField(messages[0].reactions) || {};
 
         if (!reactions[emoji]) {
             reactions[emoji] = [];
@@ -886,7 +911,7 @@ app.post('/api/community/messages/:messageId/react', async (req, res) => {
         }
 
         await db.query(
-            'UPDATE community_messages SET reactions = $1 WHERE id = $2',
+            'UPDATE community_messages SET reactions = ? WHERE id = ?',
             [JSON.stringify(reactions), messageId]
         );
         res.status(200).json({ message: 'Reacción actualizada.' });
@@ -911,7 +936,7 @@ const authAdmin = async (req, res, requiredRole) => {
         return false;
     }
     try {
-        const { rows: admins } = await db.query('SELECT role FROM users WHERE id = $1', [adminUserId]);
+        const [admins] = await db.query('SELECT role FROM users WHERE id = ?', [adminUserId]);
         if (admins.length === 0 || !checkAdminRole(admins[0].role, requiredRole)) {
             res.status(403).json({ message: 'Acceso denegado.' });
             return false;
@@ -926,7 +951,7 @@ const authAdmin = async (req, res, requiredRole) => {
 app.get('/api/admin/users', async (req, res) => {
     if (!await authAdmin(req, res, 'dueño')) return;
     try {
-        const { rows: users } = await db.query('SELECT * FROM users ORDER BY name ASC');
+        const [users] = await db.query('SELECT * FROM users ORDER BY name ASC');
         res.json(users.map(formatUserForFrontend));
     } catch (error) {
         res.status(500).json({ message: 'Error al obtener usuarios.' });
@@ -936,7 +961,7 @@ app.get('/api/admin/users', async (req, res) => {
 app.get('/api/admin/users/:id', async (req, res) => {
     if (!await authAdmin(req, res, 'dueño')) return;
     try {
-        const { rows: users } = await db.query('SELECT * FROM users WHERE id = $1', [req.params.id]);
+        const [users] = await db.query('SELECT * FROM users WHERE id = ?', [req.params.id]);
         if(users.length === 0) return res.status(404).json({message: 'Usuario no encontrado'});
         res.json(formatUserForFrontend(users[0]));
     } catch(error) {
@@ -949,8 +974,8 @@ app.put('/api/admin/users/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { name, role, points } = req.body;
-        await db.query('UPDATE users SET name = $1, role = $2, points = $3 WHERE id = $4', [name, role, points, id]);
-        const { rows: updatedUsers } = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+        await db.query('UPDATE users SET name = ?, role = ?, points = ? WHERE id = ?', [name, role, points, id]);
+        const [updatedUsers] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
         if (updatedUsers.length === 0) return res.status(404).json({ message: 'User not found after update.' });
         res.status(200).json(formatUserForFrontend(updatedUsers[0]));
     } catch (error) {
@@ -962,9 +987,9 @@ app.delete('/api/admin/users/:id', async (req, res) => {
     if (!await authAdmin(req, res, 'dueño')) return;
     try {
         const { id } = req.params;
-        await db.query('DELETE FROM community_messages WHERE user_id = $1', [id]);
-        await db.query('DELETE FROM reports WHERE user_id = $1', [id]);
-        await db.query('DELETE FROM users WHERE id = $1', [id]);
+        await db.query('DELETE FROM community_messages WHERE user_id = ?', [id]);
+        await db.query('DELETE FROM reports WHERE user_id = ?', [id]);
+        await db.query('DELETE FROM users WHERE id = ?', [id]);
         res.status(200).json({ message: 'Usuario eliminado permanentemente.' });
     } catch (error) {
         console.error("[DELETE USER] ERROR:", error);
@@ -977,19 +1002,19 @@ app.put('/api/admin/users/:id/achievements', async (req, res) => {
     try {
         const { id } = req.params;
         const { achievementId, unlocked } = req.body;
-        const { rows: users } = await db.query('SELECT unlocked_achievements FROM users WHERE id = $1', [id]);
+        const [users] = await db.query('SELECT unlocked_achievements FROM users WHERE id = ?', [id]);
         if (users.length === 0) return res.status(404).json({ message: 'Usuario no encontrado.' });
         
-        let unlockedIds = new Set(users[0].unlocked_achievements ? JSON.parse(users[0].unlocked_achievements) : []);
+        let unlockedIds = new Set(parseJsonField(users[0].unlocked_achievements) || []);
         if (unlocked) {
             unlockedIds.add(String(achievementId));
         } else {
             unlockedIds.delete(String(achievementId));
         }
         
-        await db.query('UPDATE users SET unlocked_achievements = $1 WHERE id = $2', [JSON.stringify(Array.from(unlockedIds)), id]);
+        await db.query('UPDATE users SET unlocked_achievements = ? WHERE id = ?', [JSON.stringify(Array.from(unlockedIds)), id]);
         
-        const { rows: updatedUsers } = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+        const [updatedUsers] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
         if (updatedUsers.length === 0) return res.status(404).json({ message: 'User not found after update.' });
         res.status(200).json(formatUserForFrontend(updatedUsers[0]));
 
@@ -1005,7 +1030,7 @@ app.post('/api/contact', async (req, res) => {
         const { name, email, subject, message } = req.body;
         console.log(`[CONTACT] Nuevo mensaje de ${name} (${email}). Asunto: ${subject}`);
         await db.query(
-            'INSERT INTO contact_messages (name, email, subject, message) VALUES ($1, $2, $3, $4)',
+            'INSERT INTO contact_messages (name, email, subject, message) VALUES (?, ?, ?, ?)',
             [name, email, subject, message]
         );
         console.log('[CONTACT] Mensaje guardado en la DB.');
@@ -1018,7 +1043,7 @@ app.post('/api/contact', async (req, res) => {
 
 app.get('/api/admin/messages', async (req, res) => {
     try {
-        const { rows: messages } = await db.query('SELECT * FROM contact_messages ORDER BY submitted_at DESC');
+        const [messages] = await db.query('SELECT * FROM contact_messages ORDER BY submitted_at DESC');
         res.json(messages);
     } catch (error) {
         console.error("[GET ADMIN MESSAGES] ERROR:", error);
@@ -1030,8 +1055,8 @@ app.put('/api/admin/messages/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
-        await db.query('UPDATE contact_messages SET status = $1 WHERE id = $2', [status, id]);
-        const { rows: updatedMessages } = await db.query('SELECT * FROM contact_messages WHERE id = $1', [id]);
+        await db.query('UPDATE contact_messages SET status = ? WHERE id = ?', [status, id]);
+        const [updatedMessages] = await db.query('SELECT * FROM contact_messages WHERE id = ?', [id]);
         if (updatedMessages.length === 0) return res.status(404).json({ message: 'Message not found after update.' });
         res.status(200).json(updatedMessages[0]);
     } catch (error) {
@@ -1043,7 +1068,7 @@ app.delete('/api/admin/messages/:id', async (req, res) => {
     if (!await authAdmin(req, res, 'moderador')) return;
     try {
         const { id } = req.params;
-        await db.query('DELETE FROM contact_messages WHERE id = $1', [id]);
+        await db.query('DELETE FROM contact_messages WHERE id = ?', [id]);
         res.status(200).json({ message: 'Mensaje eliminado.' });
     } catch (error) {
         res.status(500).json({ message: 'Error al eliminar el mensaje.' });
@@ -1053,8 +1078,8 @@ app.delete('/api/admin/messages/:id', async (req, res) => {
 app.get('/api/admin/reports', async (req, res) => {
     if (!await authAdmin(req, res, 'moderador')) return;
     try {
-        const { rows: reports } = await db.query(
-            `SELECT r.*, u.name as "userName", u.email as "userEmail", l.name as "locationName" 
+        const [reports] = await db.query(
+            `SELECT r.*, u.name as userName, u.email as userEmail, l.name as locationName 
              FROM reports r JOIN users u ON r.user_id = u.id 
              JOIN locations l ON r.location_id = l.id 
              ORDER BY r.reported_at DESC`
@@ -1071,21 +1096,21 @@ app.put('/api/admin/reports/:id', async (req, res) => {
         const { id } = req.params;
         const { status } = req.body;
         
-        const { rows: reports } = await db.query('SELECT location_id FROM reports WHERE id = $1', [id]);
+        const [reports] = await db.query('SELECT location_id FROM reports WHERE id = ?', [id]);
         if (reports.length === 0) return res.status(404).json({ message: 'Reporte no encontrado.' });
         const { location_id } = reports[0];
         
-        await db.query('UPDATE reports SET status = $1 WHERE id = $2', [status, id]);
+        await db.query('UPDATE reports SET status = ? WHERE id = ?', [status, id]);
 
         if (status === 'resolved' || status === 'dismissed') {
             await updateLocationStatusAfterReportChange(location_id);
         }
 
-        const { rows: updatedReports } = await db.query(
-            `SELECT r.*, u.name as "userName", u.email as "userEmail", l.name as "locationName" 
+        const [updatedReports] = await db.query(
+            `SELECT r.*, u.name as userName, u.email as userEmail, l.name as locationName 
              FROM reports r JOIN users u ON r.user_id = u.id 
              JOIN locations l ON r.location_id = l.id 
-             WHERE r.id = $1`,
+             WHERE r.id = ?`,
             [id]
         );
         if (updatedReports.length === 0) return res.status(404).json({ message: 'Report not found after update.' });
@@ -1099,16 +1124,16 @@ app.delete('/api/admin/reports/:id', async (req, res) => {
     if (!await authAdmin(req, res, 'moderador')) return;
     try {
         const { id } = req.params;
-        const { rows: reports } = await db.query('SELECT location_id FROM reports WHERE id = $1', [id]);
+        const [reports] = await db.query('SELECT location_id FROM reports WHERE id = ?', [id]);
         if (reports.length === 0) return res.status(404).json({ message: 'Reporte no encontrado.' });
         const { location_id } = reports[0];
 
-        await db.query('DELETE FROM reports WHERE id = $1', [id]);
+        await db.query('DELETE FROM reports WHERE id = ?', [id]);
         await updateLocationStatusAfterReportChange(location_id);
         
         res.status(200).json({ message: 'Reporte eliminado.' });
     } catch (error) {
-        res.status(500).json({ message: 'Error al eliminar el reporte.' });
+        res.status(500).json({ message: 'Error al eliminar el mensaje.' });
     }
 });
 
@@ -1161,12 +1186,12 @@ app.post('/api/admin/reply', async (req, res) => {
 // --- Impact Stats Endpoints ---
 app.get('/api/impact-stats', async (req, res) => {
     try {
-        const { rows } = await db.query('SELECT * FROM impact_stats WHERE id = 1');
+        const [rows] = await db.query('SELECT * FROM impact_stats WHERE id = 1');
         
         if (rows.length === 0) {
             console.warn("[GET IMPACT STATS] Fila no encontrada. Creando...");
-            await db.query(`INSERT INTO impact_stats (id, recycled_kg, participants, points) VALUES (1, 14800, 5350, 48) ON CONFLICT (id) DO NOTHING;`);
-            const { rows: newRows } = await db.query('SELECT * FROM impact_stats WHERE id = 1');
+            await db.query(`INSERT INTO impact_stats (id, recycled_kg, participants, points) VALUES (1, 14800, 5350, 48);`);
+            const [newRows] = await db.query('SELECT * FROM impact_stats WHERE id = 1');
             res.json({ recycledKg: newRows[0].recycled_kg, participants: newRows[0].participants, points: newRows[0].points });
             return;
         }
@@ -1191,12 +1216,12 @@ app.put('/api/impact-stats', async (req, res) => {
         if (recycledKg === undefined || participants === undefined || points === undefined) {
             return res.status(400).json({ message: 'Todos los campos de estadísticas son requeridos.' });
         }
-        const result = await db.query(
-            'UPDATE impact_stats SET recycled_kg = $1, participants = $2, points = $3 WHERE id = 1',
+        const [result] = await db.query(
+            'UPDATE impact_stats SET recycled_kg = ?, participants = ?, points = ? WHERE id = 1',
             [recycledKg, participants, points]
         );
 
-        if (result.rowCount === 0) {
+        if (result.affectedRows === 0) {
             throw new Error("La fila de estadísticas no se encontró en la base de datos para actualizar. Intenta reiniciar el servidor.");
         }
 

@@ -3,7 +3,7 @@ import InteractiveMap from '../components/InteractiveMap';
 import type { LocationData } from '../components/InteractiveMap';
 import type { User, GamificationAction, Location, Schedule, LocationStatus, ReportReason } from '../types';
 import FilterMenu, { Category as FilterCategory } from '../components/FilterMenu';
-import type { MapRef } from 'react-map-gl/maplibre';
+import type { MapRef } from 'react--map-gl/maplibre';
 
 const allMaterials: string[] = ['Plásticos', 'Vidrio', 'Papel/Cartón', 'Pilas'];
 const daysOfWeek = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
@@ -382,7 +382,37 @@ const PuntosVerdesPage: React.FC<{
         try {
             const response = await fetch('http://localhost:3001/api/locations');
             if (!response.ok) throw new Error('La respuesta de la red no fue exitosa');
-            const data: Location[] = await response.json();
+            
+            const rawData: any[] = await response.json();
+
+            // SAFEGUARED PARSING
+            const data: Location[] = rawData.map(loc => {
+                const safeParse = (field: any, fallback: any) => {
+                    if (typeof field === 'string') {
+                        try {
+                            const parsed = JSON.parse(field);
+                            // Ensure arrays are returned for array fields, even if parsing results in something else
+                            if (Array.isArray(fallback)) {
+                                return Array.isArray(parsed) ? parsed : fallback;
+                            }
+                            return parsed;
+                        } catch {
+                            return fallback;
+                        }
+                    }
+                    // Ensure the correct fallback type if field is null/undefined
+                    return field || fallback;
+                };
+
+                return {
+                    ...loc,
+                    schedule: safeParse(loc.schedule, []),
+                    materials: safeParse(loc.materials, []),
+                    mapData: safeParse(loc.map_data, {}),
+                    imageUrls: safeParse(loc.image_urls, ['https://images.unsplash.com/photo-1517009336183-50f2886216ec?q=80&w=800&auto=format&fit=crop']),
+                };
+            });
+
             setPuntosVerdes(data);
         } catch (error) {
             console.error("Falló la obtención de las ubicaciones:", error);
@@ -646,13 +676,24 @@ const PuntosVerdesPage: React.FC<{
 
             if (!response.ok) throw new Error('Falló el envío del reporte');
             
-            const updatedLocation = await response.json();
+            const updatedLocationFromServer = await response.json(); // This contains the new status
 
-            setPuntosVerdes(puntosVerdes.map(p => p.id === updatedLocation.id ? { ...p, status: updatedLocation.status } : p));
+            // Optimistically update the UI to reflect the report immediately
+            const updateLocationState = (location: Location) => ({
+                ...location,
+                status: updatedLocationFromServer.status as LocationStatus,
+                latestReportReason: reportData.reason,
+                reportCount: (location.reportCount || 0) + 1
+            });
+
+            setPuntosVerdes(puntosVerdes.map(p => p.id === updatedLocationFromServer.id ? updateLocationState(p) : p));
+            
             onUserAction('report_punto_verde');
             setIsReportModalOpen(false);
-            if(selectedLocation.id === updatedLocation.id) {
-                setSelectedLocation(prev => prev ? { ...prev, status: updatedLocation.status } : null);
+
+            // Also update the selected location if the detail modal is open
+            if(selectedLocation.id === updatedLocationFromServer.id) {
+                setSelectedLocation(prev => prev ? updateLocationState(prev) : null);
             }
         } catch (error) {
             console.error("Error al enviar el reporte:", error);

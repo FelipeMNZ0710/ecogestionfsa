@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import type { User, Game, GamificationAction, GameType } from '../types';
+import type { User, Game, GamificationAction, GameType, QuizQuestion, MemoryCardData, SortableItemData, HangmanWord, BinType } from '../types';
 import TriviaGame from '../components/games/TriviaGame';
 import MemoryGame from '../components/games/MemoryGame';
 import SortingGame from '../components/games/SortingGame';
@@ -144,38 +144,8 @@ const GameEditModal: React.FC<{
     const [image, setImage] = useState('');
     const [type, setType] = useState<GameType>('trivia');
     const [learningObjective, setLearningObjective] = useState('');
-    const [payload, setPayload] = useState('{}');
+    const [payload, setPayload] = useState<Game['payload']>({});
 
-    useEffect(() => {
-        if (game) {
-            setTitle(game.title);
-            setCategory(game.category);
-            setImage(game.image);
-            setType(game.type);
-            setLearningObjective(game.learningObjective);
-            setPayload(JSON.stringify(game.payload, null, 2));
-        } else {
-            setTitle('');
-            setCategory('');
-            setImage('');
-            setType('trivia');
-            setLearningObjective('');
-            setPayload('{\n  "points": 100,\n  "questions": []\n}');
-        }
-    }, [game, isOpen]);
-
-    if (!isOpen) return null;
-
-    const handleSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        try {
-            const parsedPayload = JSON.parse(payload);
-            onSave({ id: game?.id, title, category, image, type, learningObjective, payload: parsedPayload });
-        } catch (error) {
-            alert("Error: El JSON en 'Payload' no es válido.");
-        }
-    };
-    
     const allGameTypes: GameType[] = [
         'trivia', 'memory', 'sorting', 'hangman', 'chain', 'catcher', 'repair',
         'eco-quiz', 'find-the-intruder', 'recycling-path', 'river-cleaner', 'compost-sequence',
@@ -183,6 +153,161 @@ const GameEditModal: React.FC<{
         'energy-impact', 'nature-sounds', 'spot-the-difference'
     ];
 
+    useEffect(() => {
+        if (isOpen) {
+            if (game) {
+                setTitle(game.title);
+                setCategory(game.category);
+                setImage(game.image);
+                setType(game.type);
+                setLearningObjective(game.learningObjective);
+                setPayload(JSON.parse(JSON.stringify(game.payload))); // Deep copy
+            } else {
+                setTitle(''); setCategory('Conocimiento');
+                setImage('https://images.unsplash.com/photo-1593113598332-cd288d649433?q=80&w=400');
+                setType('trivia'); setLearningObjective('');
+                setPayload({ points: 100, questions: [{ question: '', options: ['', '', ''], correctAnswer: 0 }] });
+            }
+        }
+    }, [game, isOpen]);
+    
+    if (!isOpen) return null;
+
+    const handleTypeChange = (newType: GameType) => {
+        setType(newType);
+        if (!game) { // Only reset payload for new games
+            switch (newType) {
+                case 'trivia': setPayload({ points: 100, questions: [{ question: '', options: ['', '', ''], correctAnswer: 0 }] }); break;
+                case 'memory': setPayload({ points: 60, cards: [{ id: '1', content: '♻️', type: 'icon' }] }); break;
+                case 'sorting': setPayload({ points: 75, duration: 60, items: [], bins: ['plastico', 'papel', 'vidrio', 'metales', 'organico'] }); break;
+                case 'hangman': setPayload({ points: 40, words: [{ word: '', hint: '' }] }); break;
+                case 'chain': setPayload({ points: 80, duration: 90, items: [], bins: ['plastico', 'papel', 'vidrio', 'metales', 'organico'] }); break;
+                case 'catcher': setPayload({ points: 70, lives: 3, fallingItems: [] }); break;
+                case 'repair': setPayload({ points: 65, timePerItem: 15, repairableItems: [] }); break;
+                default: setPayload({ points: 50 }); break;
+            }
+        }
+    };
+
+    const handlePayloadChange = (field: string, value: any) => {
+        setPayload(prev => ({ ...prev, [field]: value }));
+    };
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        onSave({ id: game?.id, title, category, image, type, learningObjective, payload });
+    };
+
+    const renderPayloadEditor = () => {
+        const commonFields = (
+             <div>
+                <label>Puntos por Completar</label>
+                <input type="number" value={payload.points || 0} onChange={e => handlePayloadChange('points', Number(e.target.value))} />
+            </div>
+        );
+        
+        switch (type) {
+            case 'trivia':
+                const questions = payload.questions as QuizQuestion[] || [];
+                return <>
+                    {commonFields}
+                    <fieldset className="border border-slate-600 p-3 rounded-md mt-4">
+                        <legend className="px-2 text-sm text-text-secondary">Preguntas</legend>
+                        {questions.map((q, qIndex) => (
+                            <div key={qIndex} className="p-3 bg-background rounded-md border border-slate-700 mb-3">
+                                <label className="text-xs">Pregunta {qIndex + 1}</label>
+                                <input type="text" value={q.question} onChange={e => {
+                                    const newQuestions = [...questions];
+                                    newQuestions[qIndex].question = e.target.value;
+                                    handlePayloadChange('questions', newQuestions);
+                                }} className="mb-2" />
+                                <div className="grid grid-cols-2 gap-2">
+                                    {q.options.map((opt, oIndex) => (
+                                        <div key={oIndex} className="flex items-center gap-2">
+                                            <input type="radio" name={`correct-${qIndex}`} checked={q.correctAnswer === oIndex} onChange={() => {
+                                                const newQuestions = [...questions];
+                                                newQuestions[qIndex].correctAnswer = oIndex;
+                                                handlePayloadChange('questions', newQuestions);
+                                            }} />
+                                            <input type="text" value={opt} onChange={e => {
+                                                const newQuestions = [...questions];
+                                                newQuestions[qIndex].options[oIndex] = e.target.value;
+                                                handlePayloadChange('questions', newQuestions);
+                                            }} placeholder={`Opción ${oIndex + 1}`} />
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                        <button type="button" onClick={() => handlePayloadChange('questions', [...questions, { question: '', options: ['', '', ''], correctAnswer: 0 }])} className="text-sm text-primary mt-2">+ Añadir Pregunta</button>
+                    </fieldset>
+                </>;
+            case 'memory':
+                const cards = payload.cards as MemoryCardData[] || [];
+                return <>
+                    {commonFields}
+                    <fieldset className="border border-slate-600 p-3 rounded-md mt-4">
+                        <legend className="px-2 text-sm text-text-secondary">Pares de Cartas (usar emojis)</legend>
+                        <div className="grid grid-cols-4 gap-2">
+                        {cards.map((c, index) => (
+                           <div key={index} className="relative">
+                             <input type="text" value={c.content} onChange={e => {
+                                const newCards = [...cards];
+                                newCards[index].content = e.target.value;
+                                newCards[index].id = String(index + 1);
+                                handlePayloadChange('cards', newCards);
+                            }} className="text-center text-2xl p-2"/>
+                            <button type="button" onClick={() => handlePayloadChange('cards', cards.filter((_, i) => i !== index))} className="absolute -top-1 -right-1 bg-red-600 text-white w-5 h-5 rounded-full text-xs">X</button>
+                           </div>
+                        ))}
+                        </div>
+                        <button type="button" onClick={() => handlePayloadChange('cards', [...cards, { id: String(cards.length + 1), content: '', type: 'icon' }])} className="text-sm text-primary mt-2">+ Añadir Par</button>
+                    </fieldset>
+                </>;
+            case 'sorting':
+                 const items = payload.items as SortableItemData[] || [];
+                 const allBins: BinType[] = ['plastico', 'papel', 'vidrio', 'metales', 'organico'];
+                 return <>
+                    {commonFields}
+                    <div>
+                        <label>Duración (segundos)</label>
+                        <input type="number" value={payload.duration || 60} onChange={e => handlePayloadChange('duration', Number(e.target.value))} />
+                    </div>
+                     <fieldset className="border border-slate-600 p-3 rounded-md mt-4">
+                        <legend className="px-2 text-sm text-text-secondary">Objetos a Clasificar</legend>
+                        {items.map((item, index) => (
+                            <div key={index} className="grid grid-cols-3 gap-2 mb-2 items-center">
+                                <input type="text" value={item.name} onChange={e => {
+                                    const newItems = [...items]; newItems[index].name = e.target.value; handlePayloadChange('items', newItems);
+                                }} placeholder="Nombre"/>
+                                <input type="text" value={item.image} onChange={e => {
+                                    const newItems = [...items]; newItems[index].image = e.target.value; handlePayloadChange('items', newItems);
+                                }} placeholder="Emoji" className="text-center"/>
+                                <select value={item.correctBin} onChange={e => {
+                                    const newItems = [...items]; newItems[index].correctBin = e.target.value as BinType; handlePayloadChange('items', newItems);
+                                }}>
+                                    {allBins.map(b => <option key={b} value={b}>{b}</option>)}
+                                </select>
+                            </div>
+                        ))}
+                        <button type="button" onClick={() => handlePayloadChange('items', [...items, {id: `i${items.length+1}`, name: '', image: '', correctBin: 'plastico'}])} className="text-sm text-primary mt-2">+ Añadir Objeto</button>
+                    </fieldset>
+                 </>;
+            default:
+                return (
+                    <div>
+                        <label>Payload (Configuración del juego en JSON)</label>
+                        <textarea value={JSON.stringify(payload, null, 2)} onChange={e => {
+                           try {
+                                setPayload(JSON.parse(e.target.value));
+                           } catch (error) {
+                               console.log("Invalid JSON in payload");
+                           }
+                        }} rows={10} className="font-mono text-sm"></textarea>
+                    </div>
+                );
+        }
+    };
 
     return (
         <div className="modal-backdrop" onClick={onClose}>
@@ -194,14 +319,16 @@ const GameEditModal: React.FC<{
                         <div className="grid grid-cols-2 gap-4">
                             <div><label>Categoría</label><input type="text" value={category} onChange={e => setCategory(e.target.value)} required /></div>
                             <div><label>Tipo de Juego</label>
-                                <select value={type} onChange={e => setType(e.target.value as GameType)}>
+                                <select value={type} onChange={e => handleTypeChange(e.target.value as GameType)}>
                                     {allGameTypes.map(t => <option key={t} value={t}>{t}</option>)}
                                 </select>
                             </div>
                         </div>
                         <div><label>URL de la Imagen</label><input type="text" value={image} onChange={e => setImage(e.target.value)} required /></div>
                         <div><label>Objetivo de Aprendizaje</label><input type="text" value={learningObjective} onChange={e => setLearningObjective(e.target.value)} required /></div>
-                        <div><label>Payload (Configuración del juego en JSON)</label><textarea value={payload} onChange={e => setPayload(e.target.value)} rows={10} className="font-mono text-sm"></textarea></div>
+                        
+                        {renderPayloadEditor()}
+
                     </div>
                     <div className="flex justify-end space-x-3 pt-6"><button type="button" onClick={onClose} className="px-4 py-2 bg-slate-600 text-slate-100 rounded-md hover:bg-slate-500">Cancelar</button><button type="submit" className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary-dark">Guardar Juego</button></div>
                 </form>

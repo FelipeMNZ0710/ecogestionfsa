@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect } from 'react';
 import type { NewsArticle, ContentBlock } from '../types';
 
@@ -33,6 +34,7 @@ const NewsDetailModal: React.FC<NewsDetailModalProps> = ({ article, onClose }) =
             case 'text':
                 return <p key={index}>{block.text}</p>;
             case 'list':
+                 if (!Array.isArray(block.items)) return null; // Safety check
                 return <ul key={index} className="list-disc pl-5 space-y-2">
                     {block.items.map((item, i) => <li key={i}>{item}</li>)}
                 </ul>;
@@ -45,11 +47,16 @@ const NewsDetailModal: React.FC<NewsDetailModalProps> = ({ article, onClose }) =
         }
     };
 
-    const formattedDate = new Intl.DateTimeFormat('es-ES', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric'
-    }).format(new Date(`${article.date}T00:00:00`));
+    const formattedDate = (() => {
+        if (!article.date) return 'Fecha no disponible';
+        try {
+            const dateObj = new Date(`${article.date}T00:00:00`);
+            if (isNaN(dateObj.getTime())) return 'Fecha inválida';
+            return new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }).format(dateObj);
+        } catch (e) {
+            return 'Fecha inválida';
+        }
+    })();
     
     return (
         <div className={`news-detail-modal-backdrop ${isExiting ? 'exiting' : ''}`} onClick={handleClose}>
@@ -67,7 +74,7 @@ const NewsDetailModal: React.FC<NewsDetailModalProps> = ({ article, onClose }) =
                         <p className="text-sm text-text-secondary mt-2 mb-6">{formattedDate}</p>
                         
                         <div className="prose-custom">
-                            {article.content.map(renderContentBlock)}
+                            {Array.isArray(article.content) ? article.content.map(renderContentBlock) : <p>El contenido de esta noticia no está disponible.</p>}
                         </div>
 
                         <div className="mt-8 pt-6 border-t border-white/10 flex items-center gap-4">

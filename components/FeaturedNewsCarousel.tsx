@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import type { NewsArticle } from '../types';
 
 interface FeaturedNewsCarouselProps {
@@ -27,6 +27,17 @@ const FeaturedNewsCarousel: React.FC<FeaturedNewsCarouselProps> = ({ articles, o
             return () => clearInterval(slideInterval);
         }
     }, [nextSlide, isHovering]);
+    
+    const getFormattedDate = (date: string) => {
+        if (!date) return '';
+        try {
+            const dateObj = new Date(`${date}T00:00:00`);
+            if (isNaN(dateObj.getTime())) return '';
+            return new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }).format(dateObj);
+        } catch (e) {
+            return '';
+        }
+    };
 
     return (
         <div 
@@ -49,7 +60,7 @@ const FeaturedNewsCarousel: React.FC<FeaturedNewsCarouselProps> = ({ articles, o
                             <div className="absolute bottom-0 left-0 p-8 text-white">
                                 <div className="flex items-center gap-4">
                                     <span className="text-sm font-semibold bg-primary px-3 py-1 rounded-full">{article.category}</span>
-                                    <span className="text-sm text-slate-300">{ new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${article.date}T00:00:00`)) }</span>
+                                    <span className="text-sm text-slate-300">{getFormattedDate(article.date)}</span>
                                 </div>
                                 <h2 className="text-3xl lg:text-5xl font-bold font-display mt-4 leading-tight">{article.title}</h2>
                                 <p className="mt-2 text-slate-300 max-w-2xl hidden md:block">{article.excerpt}</p>

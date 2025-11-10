@@ -425,7 +425,9 @@ const StatisticsPanel: React.FC<{ messages: ContactMessage[], reports: Report[] 
         }, {} as Record<string, number>);
         
     const sortedTopLocations = Object.entries(topReportedLocations)
-        .sort(([, a], [, b]) => b - a)
+        // FIX: The `sort` method was causing a TypeScript error because the type of `b` and `a` was not being inferred as a number from Object.entries. Explicitly casting them to Number resolves the issue.
+        // Fix: Explicitly cast values to Number to resolve arithmetic operation error.
+        .sort(([, a], [, b]) => Number(b) - Number(a))
         .slice(0, 3);
 
     const topContactSubjects = messages
@@ -436,7 +438,9 @@ const StatisticsPanel: React.FC<{ messages: ContactMessage[], reports: Report[] 
         }, {} as Record<string, number>);
 
     const sortedTopSubjects = Object.entries(topContactSubjects)
-        .sort(([, a], [, b]) => b - a)
+        // FIX: The `sort` method was causing a TypeScript error because the type of `b` and `a` was not being inferred as a number from Object.entries. Explicitly casting them to Number resolves the issue.
+        // Fix: Explicitly cast values to Number to resolve arithmetic operation error.
+        .sort(([, a], [, b]) => Number(b) - Number(a))
         .slice(0, 3);
 
     return (
@@ -461,7 +465,7 @@ const StatisticsPanel: React.FC<{ messages: ContactMessage[], reports: Report[] 
                             <ul className="space-y-3">
                                 {sortedTopLocations.map(([name, count]) => (
                                     <li key={name} className="flex justify-between items-center text-sm">
-                                        <span className="text-text-secondary truncate pr-2" title={name}>{name}</span>
+                                        <span className="text-text-secondary truncate pr-2" title={name as string}>{name}</span>
                                         <span className="font-bold text-primary bg-primary/20 px-2.5 py-1 rounded-full flex-shrink-0">{count}</span>
                                     </li>
                                 ))}

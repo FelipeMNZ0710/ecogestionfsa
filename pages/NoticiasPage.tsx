@@ -1,3 +1,5 @@
+
+
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import type { User, NewsArticle, ContentBlock } from '../types';
 import NewsDetailModal from '../components/NewsDetailModal';
@@ -13,8 +15,14 @@ const NewsCard: React.FC<{
     const { image, category, title, date, excerpt } = article;
 
     const formattedDate = useMemo(() => {
-        const dateObj = new Date(`${date}T00:00:00`);
-        return new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }).format(dateObj);
+        if (!date) return 'Fecha no disponible';
+        try {
+            const dateObj = new Date(`${date}T00:00:00`);
+            if (isNaN(dateObj.getTime())) return 'Fecha inválida';
+            return new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }).format(dateObj);
+        } catch (e) {
+            return 'Fecha inválida';
+        }
     }, [date]);
 
     return (
@@ -87,7 +95,8 @@ const NewsModal: React.FC<{
             setCategory(article.category);
             setImage(article.image);
             setExcerpt(article.excerpt);
-            setContent(article.content.map(b => ({...b, id: b.id || String(Date.now() + Math.random())})));
+            const safeContent = Array.isArray(article.content) ? article.content : [];
+            setContent(safeContent.map(b => ({...b, id: b.id || String(Date.now() + Math.random())})));
             setFeatured(article.featured);
         } else {
             setTitle('');
@@ -298,7 +307,25 @@ const NoticiasPage: React.FC<{user: User | null, isAdminMode: boolean}> = ({user
         try {
             const response = await fetch('http://localhost:3001/api/news');
             if (!response.ok) throw new Error('Failed to fetch news');
-            const data = await response.json();
+            const rawData: any[] = await response.json();
+
+            const data: NewsArticle[] = rawData.map(article => {
+                const safeParse = (field: any, fallback: any) => {
+                    if (typeof field === 'string') {
+                        try {
+                            const parsed = JSON.parse(field);
+                            return Array.isArray(parsed) ? parsed : fallback;
+                        } catch {
+                            return fallback;
+                        }
+                    }
+                    return field || fallback;
+                };
+                return {
+                    ...article,
+                    content: safeParse(article.content, []),
+                };
+            });
             setNews(data);
         } catch (error) {
             console.error(error);
@@ -437,7 +464,19 @@ const NoticiasPage: React.FC<{user: User | null, isAdminMode: boolean}> = ({user
                                         <div className="absolute bottom-0 left-0 p-8 text-white">
                                             <div className="flex items-center gap-4">
                                                 <span className="text-sm font-semibold bg-primary px-3 py-1 rounded-full">{featuredArticles[0].category}</span>
-                                                <span className="text-sm text-slate-300">{ new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${featuredArticles[0].date}T00:00:00`)) }</span>
+                                                <span className="text-sm text-slate-300">
+                                                    {(() => {
+                                                        const date = featuredArticles[0].date;
+                                                        if (!date) return 'Fecha no disponible';
+                                                        try {
+                                                            const dateObj = new Date(`${date}T00:00:00`);
+                                                            if (isNaN(dateObj.getTime())) return 'Fecha inválida';
+                                                            return new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }).format(dateObj);
+                                                        } catch (e) {
+                                                            return 'Fecha inválida';
+                                                        }
+                                                    })()}
+                                                </span>
                                             </div>
                                             <h1 className="text-3xl lg:text-5xl font-bold font-display mt-4 leading-tight">{featuredArticles[0].title}</h1>
                                             <p className="mt-2 text-slate-300 max-w-2xl hidden md:block">{featuredArticles[0].excerpt}</p>
