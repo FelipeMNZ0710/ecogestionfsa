@@ -1,4 +1,5 @@
 
+
 import type { CommunityMessage } from '../types';
 
 interface Channel {
@@ -43,16 +44,23 @@ const getUserInitials = (name: string): string => name.split(' ').map(n => n[0])
 
 export const initialMessages: Record<number, CommunityMessage[]> = {
     1: [ // general
-        { id: 101, user_id: '3', user: 'María Rodriguez', avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=200&auto=format&fit=crop', avatarInitials: getUserInitials('María Rodriguez'), avatarColor: getConsistentColor('María Rodriguez'), timestamp: new Date(Date.now() - 1000 * 60 * 25), text: 'Hola a todos! Nueva por acá. Quería saber si alguien tiene ideas para reutilizar frascos de vidrio.' },
-        { id: 102, user_id: '1', user: 'Laura Fernández', avatarUrl: 'https://images.unsplash.com/photo-1521119989659-a83eee488004?q=80&w=200&auto=format&fit=crop', avatarInitials: getUserInitials('Laura Fernández'), avatarColor: getConsistentColor('Laura Fernández'), timestamp: new Date(Date.now() - 1000 * 60 * 23), text: '¡Bienvenida, María! Yo los uso para guardar legumbres y especias. También como vasos o para hacer velas. 😊', reactions: {'😊': ['Carlos Giménez']} },
-        { id: 103, user_id: '3', user: 'María Rodriguez', avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=200&auto=format&fit=crop', avatarInitials: getUserInitials('María Rodriguez'), avatarColor: getConsistentColor('María Rodriguez'), timestamp: new Date(Date.now() - 1000 * 60 * 22), text: '¡Qué buenas ideas! Gracias, Laura.' },
-        { id: 104, user_id: '4', user: 'Javier Sosa', avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop', avatarInitials: getUserInitials('Javier Sosa'), avatarColor: getConsistentColor('Javier Sosa'), timestamp: new Date(Date.now() - 1000 * 60 * 10), text: 'Che, alguien sabe si la jornada de limpieza del sábado se hace igual si llueve?', replyingTo: { messageId: 102, user: 'Laura Fernández', text: '¡Bienvenida, María! Yo los uso para guardar legumbres y especias...' }},
+        // FIX: Removed `avatarInitials` and `avatarColor` properties as they are not defined in the `CommunityMessage` type.
+        { id: 101, user_id: '3', user: 'María Rodriguez', avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=200&auto=format&fit=crop', timestamp: new Date(Date.now() - 1000 * 60 * 25), text: 'Hola a todos! Nueva por acá. Quería saber si alguien tiene ideas para reutilizar frascos de vidrio.' },
+        // FIX: Removed `avatarInitials` and `avatarColor` properties as they are not defined in the `CommunityMessage` type.
+        { id: 102, user_id: '1', user: 'Laura Fernández', avatarUrl: 'https://images.unsplash.com/photo-1521119989659-a83eee488004?q=80&w=200&auto=format&fit=crop', timestamp: new Date(Date.now() - 1000 * 60 * 23), text: '¡Bienvenida, María! Yo los uso para guardar legumbres y especias. También como vasos o para hacer velas. 😊', reactions: {'😊': ['Carlos Giménez']} },
+        // FIX: Removed `avatarInitials` and `avatarColor` properties as they are not defined in the `CommunityMessage` type.
+        { id: 103, user_id: '3', user: 'María Rodriguez', avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=200&auto=format&fit=crop', timestamp: new Date(Date.now() - 1000 * 60 * 22), text: '¡Qué buenas ideas! Gracias, Laura.' },
+        // FIX: Removed `avatarInitials` and `avatarColor` properties as they are not defined in the `CommunityMessage` type.
+        { id: 104, user_id: '4', user: 'Javier Sosa', avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop', timestamp: new Date(Date.now() - 1000 * 60 * 10), text: 'Che, alguien sabe si la jornada de limpieza del sábado se hace igual si llueve?', replyingTo: { messageId: 102, user: 'Laura Fernández', text: '¡Bienvenida, María! Yo los uso para guardar legumbres y especias...' }},
     ],
     2: [ // dudas
-        { id: 201, user_id: '2', user: 'Carlos Giménez', avatarUrl: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?q=80&w=200&auto=format&fit=crop', avatarInitials: getUserInitials('Carlos Giménez'), avatarColor: getConsistentColor('Carlos Giménez'), timestamp: new Date(Date.now() - 1000 * 60 * 120), text: 'Pregunta: ¿los tickets de supermercado van con el papel?' },
-        { id: 202, user_id: '1', user: 'Laura Fernández', avatarUrl: 'https://images.unsplash.com/photo-1521119989659-a83eee488004?q=80&w=200&auto=format&fit=crop', avatarInitials: getUserInitials('Laura Fernández'), avatarColor: getConsistentColor('Laura Fernández'), timestamp: new Date(Date.now() - 1000 * 60 * 118), text: 'Hola Carlos! No, no van. Es papel térmico y tiene químicos que contaminan el resto del papel. Van a la basura común.' },
+        // FIX: Removed `avatarInitials` and `avatarColor` properties as they are not defined in the `CommunityMessage` type.
+        { id: 201, user_id: '2', user: 'Carlos Giménez', avatarUrl: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?q=80&w=200&auto=format&fit=crop', timestamp: new Date(Date.now() - 1000 * 60 * 120), text: 'Pregunta: ¿los tickets de supermercado van con el papel?' },
+        // FIX: Removed `avatarInitials` and `avatarColor` properties as they are not defined in the `CommunityMessage` type.
+        { id: 202, user_id: '1', user: 'Laura Fernández', avatarUrl: 'https://images.unsplash.com/photo-1521119989659-a83eee488004?q=80&w=200&auto=format&fit=crop', timestamp: new Date(Date.now() - 1000 * 60 * 118), text: 'Hola Carlos! No, no van. Es papel térmico y tiene químicos que contaminan el resto del papel. Van a la basura común.' },
     ],
     3: [ // anuncios
-        { id: 301, user_id: '1', user: 'Laura Fernández', avatarUrl: 'https://images.unsplash.com/photo-1521119989659-a83eee488004?q=80&w=200&auto=format&fit=crop', avatarInitials: getUserInitials('Laura Fernández'), avatarColor: getConsistentColor('Laura Fernández'), timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24), text: '📢 ¡Atención comunidad! Este sábado 20/07 a las 10:00 AM realizaremos una jornada de limpieza en la Plaza San Martín. ¡Los esperamos a todos con guantes y buena onda!' },
+        // FIX: Removed `avatarInitials` and `avatarColor` properties as they are not defined in the `CommunityMessage` type.
+        { id: 301, user_id: '1', user: 'Laura Fernández', avatarUrl: 'https://images.unsplash.com/photo-1521119989659-a83eee488004?q=80&w=200&auto=format&fit=crop', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24), text: '📢 ¡Atención comunidad! Este sábado 20/07 a las 10:00 AM realizaremos una jornada de limpieza en la Plaza San Martín. ¡Los esperamos a todos con guantes y buena onda!' },
     ]
 };

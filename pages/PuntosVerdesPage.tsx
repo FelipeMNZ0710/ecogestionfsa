@@ -3,7 +3,7 @@ import InteractiveMap from '../components/InteractiveMap';
 import type { LocationData } from '../components/InteractiveMap';
 import type { User, GamificationAction, Location, Schedule, LocationStatus, ReportReason } from '../types';
 import FilterMenu, { Category as FilterCategory } from '../components/FilterMenu';
-import type { MapRef } from 'react--map-gl/maplibre';
+import type { MapRef } from 'react-map-gl/maplibre';
 
 const allMaterials: string[] = ['Plásticos', 'Vidrio', 'Papel/Cartón', 'Pilas'];
 const daysOfWeek = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
@@ -56,12 +56,6 @@ const LocationCard = forwardRef<HTMLDivElement, {
         <div ref={ref} className={`modern-card overflow-hidden flex flex-col transition-all duration-200 cursor-pointer relative ${isSelected || isHovered ? 'border-primary bg-surface' : 'border-white/10 bg-surface'}`} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} onClick={onClick} role="button" tabIndex={0} aria-label={`Ver detalles de ${location.name}`}>
             <div className="relative">
                 <img src={location.imageUrls[0]} alt={`Foto de ${location.name}`} className="w-full h-40 object-cover" />
-                 {isAdminMode && (
-                    <div className="card-admin-controls">
-                        <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="admin-action-button" title="Editar punto"><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.536L16.732 3.732z" /></svg></button>
-                        <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="admin-action-button delete" title="Eliminar punto"><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
-                    </div>
-                )}
                  {user && (
                     <button onClick={(e) => { e.stopPropagation(); onToggleFavorite(location.id); }} className={`absolute top-2 left-2 z-10 p-1.5 rounded-full transition-colors ${isFavorite ? 'text-yellow-400 bg-yellow-400/20' : 'text-slate-400 bg-surface/50 hover:text-yellow-400'}`} title={isFavorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}>
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
@@ -72,7 +66,13 @@ const LocationCard = forwardRef<HTMLDivElement, {
                 </div>
             </div>
             <div className="p-4 flex flex-col flex-grow">
-                <h3 className="font-bold text-lg text-text-main leading-tight">{location.name}</h3>
+                <h3 className="font-bold text-lg text-text-main leading-tight pr-20">{location.name}</h3>
+                {isAdminMode && (
+                    <div className="absolute top-1/2 right-4 -translate-y-1/2 flex gap-2">
+                        <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="admin-action-button" title="Editar punto"><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.536L16.732 3.732z" /></svg></button>
+                        <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="admin-action-button delete" title="Eliminar punto"><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
+                    </div>
+                )}
                 <p className="text-sm text-text-secondary mt-1">{location.address}</p>
                  {location.distance !== undefined && (
                     <div className="mt-3 font-semibold text-sm text-primary">
@@ -101,7 +101,11 @@ const LocationDetailModal: React.FC<{location: Location | null; user: User | nul
 
     const isOpenNow = checkOpen(location.schedule);
     const currentStatus = statusInfo[location.status];
-    const lastServicedDate = new Date(location.lastServiced).toLocaleDateString('es-AR');
+    
+    const lastServicedDate = location.lastServiced && !isNaN(new Date(location.lastServiced).getTime())
+        ? new Date(location.lastServiced).toLocaleDateString('es-AR')
+        : 'Nunca';
+
     const googleMapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${location.mapData.lat},${location.mapData.lng}`;
 
     return (
@@ -384,28 +388,26 @@ const PuntosVerdesPage: React.FC<{
             if (!response.ok) throw new Error('La respuesta de la red no fue exitosa');
             
             const rawData: any[] = await response.json();
-
-            // SAFEGUARED PARSING
+            
             const data: Location[] = rawData.map(loc => {
                 const safeParse = (field: any, fallback: any) => {
                     if (typeof field === 'string') {
-                        try {
-                            const parsed = JSON.parse(field);
-                            // Ensure arrays are returned for array fields, even if parsing results in something else
-                            if (Array.isArray(fallback)) {
-                                return Array.isArray(parsed) ? parsed : fallback;
-                            }
-                            return parsed;
-                        } catch {
-                            return fallback;
-                        }
+                        try { return JSON.parse(field); } catch { return fallback; }
                     }
-                    // Ensure the correct fallback type if field is null/undefined
                     return field || fallback;
                 };
 
                 return {
-                    ...loc,
+                    id: loc.id,
+                    name: loc.name,
+                    address: loc.address,
+                    description: loc.description,
+                    hours: loc.hours,
+                    status: loc.status,
+                    checkIns: Number(loc.check_ins) || 0,
+                    lastServiced: loc.last_serviced,
+                    reportCount: Number(loc.reportCount) || 0,
+                    latestReportReason: loc.latestReportReason,
                     schedule: safeParse(loc.schedule, []),
                     materials: safeParse(loc.materials, []),
                     mapData: safeParse(loc.map_data, {}),
@@ -652,7 +654,9 @@ const PuntosVerdesPage: React.FC<{
     const handleCheckIn = () => {
         if (selectedLocation) {
             onUserAction('check_in', { locationId: selectedLocation.id });
-            setPuntosVerdes(puntosVerdes.map(p => p.id === selectedLocation.id ? {...p, checkIns: p.checkIns + 1} : p));
+            const updatedLocation = { ...selectedLocation, checkIns: (selectedLocation.checkIns || 0) + 1 };
+            setPuntosVerdes(puntosVerdes.map(p => p.id === selectedLocation.id ? updatedLocation : p));
+            setSelectedLocation(updatedLocation);
             closeDetailModal();
         }
     };

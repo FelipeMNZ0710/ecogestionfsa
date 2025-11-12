@@ -14,7 +14,23 @@ const saltRounds = 10;
 
 // --- Middlewares ---
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+
+// Middleware to update user's last active time
+const updateUserActivity = async (req, res, next) => {
+    // A simple way to get userId from various requests
+    const userId = req.body.userId || req.query.userId || (req.user ? req.user.id : null) || (req.params.userId);
+    if (userId) {
+        try {
+            await db.query('UPDATE users SET last_active = NOW() WHERE id = ?', [userId]);
+        } catch (error) {
+            console.warn(`[Activity] Could not update last_active for user ${userId}:`, error.message);
+        }
+    }
+    next();
+};
+app.use(updateUserActivity);
+
 
 // --- Nodemailer Transporter Setup ---
 let transporter;
@@ -52,6 +68,7 @@ const initializeDatabase = async () => {
               unlocked_achievements TEXT DEFAULT NULL,
               stats TEXT DEFAULT NULL,
               last_login TIMESTAMP NULL,
+              last_active TIMESTAMP NULL DEFAULT NULL,
               favorite_locations TEXT DEFAULT NULL,
               banner_url TEXT DEFAULT NULL,
               profile_picture_url TEXT DEFAULT NULL,
@@ -61,6 +78,39 @@ const initializeDatabase = async () => {
             );
         `);
         console.log('✅ Tabla "users" asegurada.');
+
+        const usersToInsert = [
+            { id: 1, name: 'Laura Fernández', email: 'laura@ecogestion.com', role: 'moderador' },
+            { id: 2, name: 'Carlos Giménez', email: 'carlos@ecogestion.com', role: 'usuario' },
+            { id: 3, name: 'María Rodriguez', email: 'maria@ecogestion.com', role: 'usuario' },
+            { id: 4, name: 'Javier Sosa', email: 'javier@ecogestion.com', role: 'usuario' },
+            { id: 5, name: 'Admin Dueño', email: 'admin@ecogestion.com', role: 'dueño' },
+        ];
+        console.log('⏳ Verificando/poblando usuarios iniciales...');
+        const passwordHash = await bcrypt.hash('password123', saltRounds);
+        const defaultStats = JSON.stringify({ messagesSent: 0, pointsVisited: 0, reportsMade: 0, dailyLogins: 0, completedQuizzes: [], quizzesCompleted: 0, gamesPlayed: 0, objectsIdentified: 0 });
+
+        for (const user of usersToInsert) {
+            await connection.query(
+                'INSERT IGNORE INTO users (id, name, email, password_hash, role, stats) VALUES (?, ?, ?, ?, ?, ?)',
+                [user.id, user.name, user.email, passwordHash, user.role, defaultStats]
+            );
+        }
+        console.log(`✅ ¡${usersToInsert.length} usuarios iniciales verificados/insertados! (pass: password123)`);
+
+        const felipeId = 6;
+        const felipeEmail = 'felipemonzon0710@gmail.com';
+        const felipeName = 'Felipe Monzón';
+        const felipePassword = '7c3f1d85vec';
+        const felipeRole = 'dueño';
+        const felipePasswordHash = await bcrypt.hash(felipePassword, saltRounds);
+        
+        await connection.query(
+            `INSERT INTO users (id, name, email, password_hash, role, stats) VALUES (?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE name = VALUES(name), password_hash = VALUES(password_hash), role = VALUES(role)`,
+            [felipeId, felipeName, felipeEmail, felipePasswordHash, felipeRole, defaultStats]
+        );
+        console.log(`✅ Usuario dueño '${felipeName}' asegurado con ID ${felipeId}.`);
 
         // --- Locations Table (MySQL Syntax with ENUM) ---
         await connection.query(`
@@ -91,9 +141,9 @@ const initializeDatabase = async () => {
             );
         `);
         console.log('✅ Tabla "impact_stats" asegurada.');
-        const [statsRows] = await db.query('SELECT * FROM impact_stats WHERE id = 1');
+        const [statsRows] = await connection.query('SELECT * FROM impact_stats WHERE id = 1');
         if (statsRows.length === 0) {
-            await db.query(`INSERT INTO impact_stats (id, recycled_kg, participants, points) VALUES (1, 14800, 5350, 48);`);
+            await connection.query(`INSERT INTO impact_stats (id, recycled_kg, participants, points) VALUES (1, 14800, 5350, 48);`);
             console.log('✅ Datos iniciales de estadísticas insertados.');
         } else {
             console.log('✅ Fila de estadísticas verificada.');
@@ -131,9 +181,9 @@ const initializeDatabase = async () => {
         `);
         console.log('✅ Tabla "games" asegurada.');
         
-        const [gameRows] = await db.query('SELECT COUNT(*) as count FROM games');
-        if (gameRows[0].count === 0) {
-            console.log('⏳ La tabla "games" está vacía. Poblando con datos iniciales...');
+        const [gameRows] = await connection.query('SELECT COUNT(*) as count FROM games');
+        if (gameRows[0].count < gamesData.length) {
+            console.log('⏳ La tabla "games" está incompleta o vacía. Poblando/completando con datos iniciales...');
             for (const g of gamesData) {
                 await connection.query(
                     'INSERT IGNORE INTO games (id, title, category, image, type, learningObjective, payload, rating) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
@@ -142,7 +192,7 @@ const initializeDatabase = async () => {
             }
             console.log(`✅ ¡${gamesData.length} juegos insertados/verificados en la base de datos!`);
         } else {
-            console.log('✅ Tabla "games" verificada.');
+            console.log('✅ Tabla "games" verificada y completa.');
         }
 
         // --- User Game Scores Table (MySQL Syntax with Index) ---
@@ -167,7 +217,7 @@ const initializeDatabase = async () => {
               user_id INT NOT NULL,
               reason ENUM('full', 'dirty', 'damaged', 'other') NOT NULL,
               comment TEXT,
-              image_url TEXT,
+              image_url MEDIUMTEXT,
               status ENUM('pending', 'resolved', 'dismissed') NOT NULL DEFAULT 'pending',
               reported_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
               INDEX idx_reports_location_id (location_id),
@@ -190,6 +240,31 @@ const initializeDatabase = async () => {
         `);
         console.log('✅ Tabla "contact_messages" asegurada.');
 
+        // --- Community Channels Table (MySQL Syntax) ---
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS community_channels (
+              id INT AUTO_INCREMENT PRIMARY KEY,
+              name VARCHAR(255) NOT NULL UNIQUE,
+              description TEXT,
+              admin_only_write BOOLEAN DEFAULT FALSE
+            );
+        `);
+        console.log('✅ Tabla "community_channels" asegurada.');
+        
+        const initialChannels = [
+            { id: 1, name: 'general', description: 'Charlas generales', admin_only_write: false },
+            { id: 2, name: 'dudas', description: 'Preguntas sobre reciclaje', admin_only_write: false },
+            { id: 3, name: 'anuncios', description: 'Anuncios importantes', admin_only_write: true },
+        ];
+        console.log('⏳ Verificando/poblando canales iniciales...');
+        for (const channel of initialChannels) {
+            await connection.query(
+                'INSERT IGNORE INTO community_channels (id, name, description, admin_only_write) VALUES (?, ?, ?, ?)',
+                [channel.id, channel.name, channel.description, channel.admin_only_write]
+            );
+        }
+        console.log('✅ Canales iniciales verificados/insertados.');
+
         // --- Community Messages Table (MySQL Syntax with Indexes) ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS community_messages (
@@ -197,15 +272,114 @@ const initializeDatabase = async () => {
               channel_id INT NOT NULL,
               user_id INT NOT NULL,
               content TEXT NOT NULL,
+              image_url MEDIUMTEXT DEFAULT NULL,
               created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
               edited BOOLEAN DEFAULT FALSE,
               reactions JSON,
               replying_to_message_id INT DEFAULT NULL,
               INDEX idx_community_messages_channel_id (channel_id),
-              INDEX idx_community_messages_user_id (user_id)
+              INDEX idx_community_messages_user_id (user_id),
+              FOREIGN KEY (channel_id) REFERENCES community_channels(id) ON DELETE CASCADE
             );
         `);
         console.log('✅ Tabla "community_messages" asegurada.');
+
+        const { initialMessages } = require('./data/communityData');
+        const [msgCountRows] = await connection.query('SELECT COUNT(*) as count FROM community_messages');
+        const totalInitialMessages = Object.values(initialMessages).reduce((sum, channelMsgs) => sum + channelMsgs.length, 0);
+
+        if (msgCountRows[0].count < totalInitialMessages) {
+            console.log('⏳ La tabla "community_messages" está incompleta o vacía. Poblando/completando...');
+            for (const channelId in initialMessages) {
+                for (const msg of initialMessages[channelId]) {
+                    await connection.query(
+                        'INSERT IGNORE INTO community_messages (id, channel_id, user_id, content, created_at, edited, reactions, replying_to_message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                        [msg.id, channelId, msg.user_id, msg.content, msg.created_at, msg.edited || false, JSON.stringify(msg.reactions || {}), msg.replying_to_message_id || null]
+                    );
+                }
+            }
+            console.log('✅ Mensajes iniciales de la comunidad verificados/insertados.');
+        } else {
+            console.log('✅ Tabla "community_messages" verificada.');
+        }
+
+        const mentionMessageId = 105;
+        const [mentionMessageExists] = await connection.query('SELECT id FROM community_messages WHERE id = ?', [mentionMessageId]);
+        if (mentionMessageExists.length === 0) {
+            const lauraUserId = 1;
+            const generalChannelId = 1;
+            await connection.query(
+                'INSERT INTO community_messages (id, channel_id, user_id, content, created_at) VALUES (?, ?, ?, ?, ?)',
+                [mentionMessageId, generalChannelId, lauraUserId, `Hola @${felipeName}, ¿podrías revisar las nuevas estadísticas de la página de inicio?`, new Date(Date.now() - 1000 * 60 * 5)]
+            );
+            console.log(`✅ Mensaje de mención de prueba (ID ${mentionMessageId}) creado.`);
+        }
+
+        // --- Notifications Table (MySQL Syntax with ENUM and Indexes) ---
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                type ENUM('achievement', 'mention', 'reply') NOT NULL,
+                achievement_id VARCHAR(255),
+                related_user_id INT,
+                community_message_id INT,
+                channel_id INT,
+                is_read BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (related_user_id) REFERENCES users(id) ON DELETE SET NULL,
+                FOREIGN KEY (community_message_id) REFERENCES community_messages(id) ON DELETE CASCADE,
+                FOREIGN KEY (channel_id) REFERENCES community_channels(id) ON DELETE CASCADE
+            );
+        `);
+        console.log('✅ Tabla "notifications" asegurada.');
+
+        const [notifCheck] = await connection.query('SELECT id FROM notifications WHERE community_message_id = ? AND user_id = ?', [mentionMessageId, felipeId]);
+        if (notifCheck.length === 0) {
+            const lauraUserId = 1;
+            const generalChannelId = 1;
+            await connection.query(
+                'INSERT INTO notifications (user_id, type, related_user_id, community_message_id, channel_id) VALUES (?, ?, ?, ?, ?)',
+                [felipeId, 'mention', lauraUserId, mentionMessageId, generalChannelId]
+            );
+            console.log(`✅ Notificación de prueba para Felipe Monzón creada.`);
+        } else {
+            console.log('✅ Notificación de prueba para Felipe ya existe.');
+        }
+
+
+        // --- Rewards Table ---
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS rewards (
+              id VARCHAR(255) PRIMARY KEY,
+              title VARCHAR(255) NOT NULL,
+              description TEXT NOT NULL,
+              cost INT NOT NULL,
+              category ENUM('Descuentos','Digital','Donaciones','Productos') NOT NULL,
+              image MEDIUMTEXT NOT NULL,
+              stock INT DEFAULT NULL,
+              file_name VARCHAR(255) DEFAULT NULL,
+              file_data MEDIUMTEXT DEFAULT NULL
+            );
+        `);
+        console.log('✅ Tabla "rewards" asegurada.');
+        
+        const rewardsData = require('./data/rewardsData');
+        const [rewardCountRows] = await connection.query('SELECT COUNT(*) as count FROM rewards');
+        if (rewardCountRows[0].count < rewardsData.length) {
+            console.log('⏳ La tabla "rewards" está incompleta o vacía. Poblando/completando con datos iniciales...');
+            for (const reward of rewardsData) {
+                await connection.query(
+                    'INSERT IGNORE INTO rewards (id, title, description, cost, category, image, stock) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    [reward.id, reward.title, reward.description, reward.cost, reward.category, reward.image, reward.stock]
+                );
+            }
+            console.log(`✅ ¡${rewardsData.length} recompensas verificadas/insertadas en la base de datos!`);
+        } else {
+             console.log('✅ Tabla "rewards" verificada y completa.');
+        }
+
 
     } catch (error) {
         console.error('❌ ERROR CRÍTICO durante la inicialización de la base de datos:', error);
@@ -218,49 +392,93 @@ const initializeDatabase = async () => {
 };
 
 // --- Helper Functions ---
-const parseJsonField = (field) => {
-    if (!field) return null;
-    if (typeof field === 'string') {
-        try {
-            return JSON.parse(field);
-        } catch (e) {
-            console.error('Error parsing JSON field:', field, e);
-            return null; // Return null on parsing error
-        }
-    }
-    return field; // Already an object/array
-};
-
 const formatUserForFrontend = (dbUser) => {
-    if (!dbUser) return null;
-    const { allAchievements } = require('./data/achievementsData');
-    
-    const unlockedIds = new Set(parseJsonField(dbUser.unlocked_achievements) || []);
-    
-    const userAchievements = allAchievements.map(ach => ({
-        ...ach,
-        unlocked: unlockedIds.has(ach.id)
-    }));
+    try {
+        if (!dbUser || typeof dbUser !== 'object') return null;
 
-    return {
-        id: dbUser.id.toString(),
-        name: dbUser.name,
-        email: dbUser.email,
-        points: dbUser.points,
-        kgRecycled: parseFloat(dbUser.kg_recycled),
-        role: dbUser.role,
-        achievements: userAchievements,
-        favoriteLocations: parseJsonField(dbUser.favorite_locations) || [],
-        lastLogin: dbUser.last_login ? new Date(dbUser.last_login).toISOString().split('T')[0] : null,
-        bannerUrl: dbUser.banner_url,
-        profilePictureUrl: dbUser.profile_picture_url,
-        title: dbUser.title,
-        bio: dbUser.bio,
-        socials: parseJsonField(dbUser.socials) || {},
-        stats: parseJsonField(dbUser.stats) || {
-            messagesSent: 0, pointsVisited: 0, reportsMade: 0, dailyLogins: 0, completedQuizzes: [], quizzesCompleted: 0, gamesPlayed: 0, objectsIdentified: 0
-        },
-    };
+        const { allAchievements } = require('./data/achievementsData');
+        
+        let unlockedIds = new Set();
+        try {
+            if (typeof dbUser.unlocked_achievements === 'string' && dbUser.unlocked_achievements.trim().startsWith('[')) {
+                const parsedAchievements = JSON.parse(dbUser.unlocked_achievements);
+                if (Array.isArray(parsedAchievements)) {
+                    unlockedIds = new Set(parsedAchievements.map(String));
+                }
+            }
+        } catch (e) {
+            console.warn(`[formatUser] Could not parse 'unlocked_achievements' for user ${dbUser.id}. Using default. Data:`, dbUser.unlocked_achievements);
+        }
+
+        const userAchievements = allAchievements.map(ach => ({
+            ...ach,
+            unlocked: unlockedIds.has(ach.id)
+        }));
+
+        const defaultStats = { messagesSent: 0, pointsVisited: 0, reportsMade: 0, dailyLogins: 0, completedQuizzes: [], quizzesCompleted: 0, gamesPlayed: 0, objectsIdentified: 0 };
+        let finalStats = { ...defaultStats };
+        try {
+            let parsedStats = {};
+            if (typeof dbUser.stats === 'string' && dbUser.stats.trim().startsWith('{')) {
+                parsedStats = JSON.parse(dbUser.stats);
+            } else if (typeof dbUser.stats === 'object' && dbUser.stats !== null) {
+                parsedStats = dbUser.stats;
+            }
+             if (typeof parsedStats === 'object' && parsedStats !== null) {
+                finalStats = { ...defaultStats, ...parsedStats };
+            }
+        } catch (e) {
+             console.warn(`[formatUser] Could not parse 'stats' for user ${dbUser.id}. Using default. Data:`, dbUser.stats);
+        }
+
+        let safeLastLogin = null;
+        if (dbUser.last_login) {
+            const date = new Date(dbUser.last_login);
+            if (!isNaN(date.getTime())) {
+                safeLastLogin = date.toISOString().split('T')[0];
+            }
+        }
+
+        const safeParseJsonArray = (field) => {
+            try {
+                if (typeof field === 'string' && field.trim().startsWith('[')) {
+                    const parsed = JSON.parse(field);
+                    if (Array.isArray(parsed)) return parsed;
+                }
+            } catch (e) {}
+            return [];
+        };
+        const safeParseJsonObject = (field) => {
+             try {
+                if (typeof field === 'string' && field.trim().startsWith('{')) {
+                    const parsed = JSON.parse(field);
+                    if (typeof parsed === 'object' && parsed !== null) return parsed;
+                }
+            } catch (e) {}
+            return {};
+        };
+
+        return {
+            id: String(dbUser.id),
+            name: dbUser.name || '',
+            email: dbUser.email || '',
+            points: Number(dbUser.points) || 0,
+            kgRecycled: parseFloat(dbUser.kg_recycled) || 0.00,
+            role: dbUser.role || 'usuario',
+            achievements: userAchievements,
+            stats: finalStats,
+            lastLogin: safeLastLogin,
+            favoriteLocations: safeParseJsonArray(dbUser.favorite_locations),
+            bannerUrl: dbUser.banner_url || null,
+            profilePictureUrl: dbUser.profile_picture_url || null,
+            title: dbUser.title || null,
+            bio: dbUser.bio || null,
+            socials: safeParseJsonObject(dbUser.socials),
+        };
+    } catch (error) {
+        console.error(`[CRITICAL] formatUserForFrontend failed unexpectedly for user id ${dbUser?.id}.`, error);
+        return null; 
+    }
 };
 
 
@@ -367,13 +585,8 @@ app.post('/api/user-action', async (req, res) => {
         if (userRows.length === 0) return res.status(404).json({ message: 'Usuario no encontrado.' });
         
         const dbUser = userRows[0];
-        // Parse JSON fields for the service
-        dbUser.stats = parseJsonField(dbUser.stats) || {};
-        dbUser.unlocked_achievements = parseJsonField(dbUser.unlocked_achievements) || [];
-
         const { updatedUser, notifications } = processAction(dbUser, action, payload);
 
-        // Persist changes to DB
         await db.query(
             'UPDATE users SET points = ?, last_login = ?, stats = ?, unlocked_achievements = ? WHERE id = ?',
             [
@@ -385,6 +598,15 @@ app.post('/api/user-action', async (req, res) => {
             ]
         );
         
+        for (const notif of notifications) {
+            if (notif.type === 'achievement' && notif.achievementId) {
+                await db.query(
+                    'INSERT INTO notifications (user_id, type, achievement_id) VALUES (?, ?, ?)',
+                    [userId, 'achievement', notif.achievementId]
+                );
+            }
+        }
+        
         const [refetchedUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
 
         res.status(200).json({
@@ -395,6 +617,26 @@ app.post('/api/user-action', async (req, res) => {
     } catch (error) {
         console.error('[USER ACTION] ERROR:', error);
         res.status(500).json({ message: 'Error en el servidor al procesar la acción.' });
+    }
+});
+
+app.get('/api/users/profile/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [users] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
+        if (users.length === 0) {
+            return res.status(404).json({ message: 'Usuario no encontrado.' });
+        }
+        
+        const formattedUser = formatUserForFrontend(users[0]);
+        if (!formattedUser) {
+            return res.status(500).json({ message: 'Error al procesar los datos del usuario.' });
+        }
+
+        res.status(200).json(formattedUser);
+    } catch (error) {
+        console.error('[GET USER PROFILE] ERROR:', error);
+        res.status(500).json({ message: 'Error en el servidor al obtener el perfil del usuario.' });
     }
 });
 
@@ -439,7 +681,15 @@ app.put('/api/users/favorites', async (req, res) => {
         const [users] = await db.query('SELECT favorite_locations FROM users WHERE id = ?', [userId]);
         if (users.length === 0) return res.status(404).json({ message: 'Usuario no encontrado.' });
         
-        let favorites = parseJsonField(users[0].favorite_locations) || [];
+        const safeParseJson = (jsonString, fallbackValue) => {
+            try {
+                if(typeof jsonString === 'string') return JSON.parse(jsonString);
+                return fallbackValue;
+            } catch {
+                return fallbackValue;
+            }
+        }
+        let favorites = safeParseJson(users[0].favorite_locations, []) || [];
         const index = favorites.indexOf(locationId);
         if (index > -1) favorites.splice(index, 1); else favorites.push(locationId);
         
@@ -452,6 +702,144 @@ app.put('/api/users/favorites', async (req, res) => {
         res.status(500).json({ message: 'Error en el servidor al actualizar favoritos.' });
     }
 });
+
+// --- Rewards ---
+app.get('/api/rewards', async (req, res) => {
+    try {
+        const [rewards] = await db.query('SELECT id, title, description, cost, category, image, stock FROM rewards ORDER BY cost ASC');
+        res.json(rewards);
+    } catch (error) {
+        console.error("[GET REWARDS] ERROR:", error);
+        res.status(500).json({ message: "Error al obtener las recompensas." });
+    }
+});
+
+app.post('/api/redeem-reward', async (req, res) => {
+    try {
+        const { userId, rewardId } = req.body;
+        if (!userId || !rewardId) {
+            return res.status(400).json({ message: "Se requiere ID de usuario y de recompensa." });
+        }
+        
+        const [[reward]] = await db.query('SELECT * FROM rewards WHERE id = ?', [rewardId]);
+        if (!reward) {
+            return res.status(404).json({ message: "Recompensa no encontrada." });
+        }
+
+        const [userRows] = await db.query('SELECT points FROM users WHERE id = ?', [userId]);
+        if (userRows.length === 0) {
+            return res.status(404).json({ message: "Usuario no encontrado." });
+        }
+        
+        if (reward.stock !== null && reward.stock <= 0) {
+            return res.status(403).json({ message: "Esta recompensa está agotada." });
+        }
+
+        const userPoints = userRows[0].points;
+        if (userPoints < reward.cost) {
+            return res.status(403).json({ message: "No tienes suficientes EcoPuntos para canjear esta recompensa." });
+        }
+
+        const newPoints = userPoints - reward.cost;
+        await db.query('UPDATE users SET points = ? WHERE id = ?', [newPoints, userId]);
+
+        if (reward.stock !== null) {
+            await db.query('UPDATE rewards SET stock = stock - 1 WHERE id = ?', [rewardId]);
+        }
+        
+        console.log(`[REDEEM] Usuario ${userId} canjeó ${reward.title} por ${reward.cost} puntos. Saldo restante: ${newPoints}.`);
+
+        const [updatedUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
+        const formattedUser = formatUserForFrontend(updatedUserRows[0]);
+
+        if (reward.category === 'Digital') {
+            const [[rewardWithFile]] = await db.query('SELECT file_name, file_data FROM rewards WHERE id = ?', [rewardId]);
+            if (rewardWithFile && rewardWithFile.file_data) {
+                return res.status(200).json({
+                    updatedUser: formattedUser,
+                    rewardWithFile: {
+                        fileName: rewardWithFile.file_name,
+                        fileData: rewardWithFile.file_data,
+                    },
+                });
+            }
+        }
+
+        res.status(200).json({ updatedUser: formattedUser });
+
+    } catch (error) {
+        console.error('[REDEEM REWARD] ERROR:', error);
+        res.status(500).json({ message: "Error en el servidor al canjear la recompensa." });
+    }
+});
+
+const authAdminForRewards = async (req, res, next) => {
+    const { adminUserId } = req.body;
+    if (!adminUserId) return res.status(401).json({ message: 'Autenticación requerida.' });
+
+    try {
+        const [admins] = await db.query('SELECT role FROM users WHERE id = ?', [adminUserId]);
+        if (admins.length > 0 && (admins[0].role === 'dueño' || admins[0].role === 'moderador')) {
+            next();
+        } else {
+            res.status(403).json({ message: 'Acceso denegado.' });
+        }
+    } catch (error) {
+        res.status(500).json({ message: 'Error de servidor al verificar permisos.' });
+    }
+};
+
+app.post('/api/rewards', authAdminForRewards, async (req, res) => {
+    try {
+        const { id, title, description, cost, category, image, stock, fileName, fileData } = req.body;
+        if (!id || !title || !description || cost === undefined || !category || !image) {
+            return res.status(400).json({ message: 'Todos los campos son requeridos.' });
+        }
+        await db.query(
+            'INSERT INTO rewards (id, title, description, cost, category, image, stock, file_name, file_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [id, title, description, cost, category, image, stock != null ? stock : null, fileName, fileData]
+        );
+        res.status(201).json({ message: 'Recompensa creada.' });
+    } catch (error) {
+        console.error("[CREATE REWARD] ERROR:", error);
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: "Ya existe una recompensa con ese ID." });
+        }
+        res.status(500).json({ message: "Error al crear la recompensa." });
+    }
+});
+
+app.put('/api/rewards/:id', authAdminForRewards, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { title, description, cost, category, image, stock, fileName, fileData } = req.body;
+        if (!title || !description || cost === undefined || !category || !image) {
+            return res.status(400).json({ message: 'Faltan campos requeridos.' });
+        }
+        const [result] = await db.query(
+            'UPDATE rewards SET title = ?, description = ?, cost = ?, category = ?, image = ?, stock = ?, file_name = ?, file_data = ? WHERE id = ?',
+            [title, description, cost, category, image, stock != null ? stock : null, fileName, fileData, id]
+        );
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Recompensa no encontrada.' });
+        res.status(200).json({ message: 'Recompensa actualizada.' });
+    } catch (error) {
+        console.error("[UPDATE REWARD] ERROR:", error);
+        res.status(500).json({ message: "Error al actualizar la recompensa." });
+    }
+});
+
+app.delete('/api/rewards/:id', authAdminForRewards, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const [result] = await db.query('DELETE FROM rewards WHERE id = ?', [id]);
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Recompensa no encontrada.' });
+        res.status(200).json({ message: 'Recompensa eliminada.' });
+    } catch (error) {
+        console.error("[DELETE REWARD] ERROR:", error);
+        res.status(500).json({ message: "Error al eliminar la recompensa." });
+    }
+});
+
 
 // --- Puntos Verdes & Reports ---
 const updateLocationStatusAfterReportChange = async (locationId) => {
@@ -484,12 +872,20 @@ app.get('/api/locations', async (req, res) => {
                 (SELECT reason FROM reports WHERE location_id = l.id AND status = 'pending' ORDER BY reported_at DESC LIMIT 1) as latestReportReason
             FROM locations l
         `);
+        const safeParseJson = (jsonString, fallbackValue) => {
+            try {
+                if (typeof jsonString === 'string') return JSON.parse(jsonString);
+                return fallbackValue
+            } catch {
+                return fallbackValue
+            }
+        };
         const formattedLocations = locations.map(loc => ({
             ...loc,
-            schedule: parseJsonField(loc.schedule) || [],
-            materials: parseJsonField(loc.materials) || [],
-            map_data: parseJsonField(loc.map_data) || {},
-            image_urls: parseJsonField(loc.image_urls) || [],
+            schedule: safeParseJson(loc.schedule, []) || [],
+            materials: safeParseJson(loc.materials, []) || [],
+            map_data: safeParseJson(loc.map_data, {}) || {},
+            image_urls: safeParseJson(loc.image_urls, []) || [],
             reportCount: Number(loc.reportCount) || 0,
             latestReportReason: loc.latestReportReason
         }));
@@ -569,12 +965,20 @@ app.post('/api/locations/report', async (req, res) => {
 app.get('/api/news', async (req, res) => {
     try {
         const [articles] = await db.query('SELECT * FROM news_articles ORDER BY published_at DESC, id DESC');
+        const safeParseJson = (jsonString, fallbackValue) => {
+            try {
+                if (typeof jsonString === 'string') return JSON.parse(jsonString);
+                return fallbackValue;
+            } catch {
+                return fallbackValue;
+            }
+        }
         const formattedArticles = articles.map(article => {
             const articleDate = new Date(article.published_at);
             return {
                 ...article,
                 date: !isNaN(articleDate.getTime()) ? articleDate.toISOString().split('T')[0] : null,
-                content: parseJsonField(article.content) || [],
+                content: safeParseJson(article.content, []) || [],
             };
         });
         res.json(formattedArticles);
@@ -644,10 +1048,17 @@ app.get('/api/games', async (req, res) => {
             const [result] = await db.query('SELECT * FROM games ORDER BY id ASC');
             games = result;
         }
-
+        const safeParseJson = (jsonString, fallbackValue) => {
+            try {
+                if (typeof jsonString === 'string') return JSON.parse(jsonString);
+                return fallbackValue
+            } catch {
+                return fallbackValue
+            }
+        };
         const formattedGames = games.map(g => ({
             ...g,
-            payload: parseJsonField(g.payload) || {},
+            payload: safeParseJson(g.payload, {}) || {},
             userHighScore: g.high_score !== null && g.high_score !== undefined ? g.high_score : 0,
         }));
         res.json(formattedGames);
@@ -702,13 +1113,6 @@ app.delete('/api/games/:id', async (req, res) => {
 
 
 // --- Community Endpoints ---
-let communityChannels = [
-    { id: 1, name: 'general', description: 'Charlas generales' },
-    { id: 2, name: 'dudas', description: 'Preguntas sobre reciclaje' },
-    { id: 3, name: 'anuncios', description: 'Anuncios importantes', admin_only_write: true },
-];
-let nextChannelId = 4;
-
 const isAdmin = async (req, res, next) => {
     const { userId, userRole } = req.body;
     if (userRole === 'dueño' || userRole === 'moderador') {
@@ -728,50 +1132,67 @@ const isAdmin = async (req, res, next) => {
 };
 
 app.get('/api/community/channels', async (req, res) => {
-    res.json(communityChannels);
+    try {
+        const { userId } = req.query;
+        if (userId) {
+            const [channels] = await db.query(
+                `SELECT c.id, c.name, c.description, c.admin_only_write, COUNT(n.id) as unreadCount
+                 FROM community_channels c
+                 LEFT JOIN notifications n ON c.id = n.channel_id AND n.user_id = ? AND n.is_read = FALSE AND (n.type = 'mention' OR n.type = 'reply')
+                 GROUP BY c.id, c.name, c.description, c.admin_only_write
+                 ORDER BY c.id ASC`,
+                [userId]
+            );
+            res.json(channels.map(c => ({...c, unreadCount: Number(c.unreadCount)})));
+        } else {
+            const [channels] = await db.query('SELECT * FROM community_channels ORDER BY id ASC');
+            res.json(channels);
+        }
+    } catch (error) {
+        console.error('[GET CHANNELS] ERROR:', error);
+        res.status(500).json({ message: "Error al obtener canales." });
+    }
 });
 
 app.post('/api/community/channels', isAdmin, async (req, res) => {
-    const { name, description, admin_only_write } = req.body;
-    if (!name || !description) {
-        return res.status(400).json({ message: 'Nombre y descripción son requeridos.' });
+    try {
+        const { name, description, admin_only_write } = req.body;
+        if (!name || !description) return res.status(400).json({ message: 'Nombre y descripción son requeridos.' });
+        const channelName = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        const [result] = await db.query(
+            'INSERT INTO community_channels (name, description, admin_only_write) VALUES (?, ?, ?)',
+            [channelName, description, !!admin_only_write]
+        );
+        res.status(201).json({ id: result.insertId, name: channelName, description, admin_only_write: !!admin_only_write });
+    } catch (error) {
+        console.error('[CREATE CHANNEL] ERROR:', error);
+        res.status(500).json({ message: "Error al crear canal." });
     }
-    const newChannel = {
-        id: nextChannelId++,
-        name: name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''),
-        description,
-        admin_only_write: !!admin_only_write
-    };
-    communityChannels.push(newChannel);
-    res.status(201).json(newChannel);
 });
 
 app.delete('/api/community/channels/:id', isAdmin, async (req, res) => {
     const channelId = parseInt(req.params.id, 10);
-    const channelIndex = communityChannels.findIndex(c => c.id === channelId);
-
-    if (channelIndex === -1) return res.status(404).json({ message: 'Canal no encontrado.' });
     if (channelId === 1) return res.status(400).json({ message: 'No se puede eliminar el canal #general.' });
-
-    communityChannels.splice(channelIndex, 1);
-    
     try {
-        await db.query('DELETE FROM community_messages WHERE channel_id = ?', [channelId]);
-    } catch(error) {
-        console.error(`[DELETE CHANNEL MESSAGES] Error:`, error);
+        const [result] = await db.query('DELETE FROM community_channels WHERE id = ?', [channelId]);
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Canal no encontrado.' });
+        res.status(200).json({ message: 'Canal eliminado.' });
+    } catch (error) {
+        console.error(`[DELETE CHANNEL] Error:`, error);
+        res.status(500).json({ message: "Error al eliminar canal." });
     }
-    
-    res.status(200).json({ message: 'Canal eliminado.' });
 });
+
 
 app.get('/api/community/members', async (req, res) => {
      try {
-        const [members] = await db.query("SELECT id, name, profile_picture_url, role FROM users ORDER BY name");
+        const [members] = await db.query("SELECT id, name, profile_picture_url, role, last_active FROM users ORDER BY name");
         const formattedMembers = members.map(m => ({
             id: m.id.toString(),
             name: m.name,
             profile_picture_url: m.profile_picture_url,
-            is_admin: m.role === 'dueño' || m.role === 'moderador'
+            is_admin: m.role === 'dueño' || m.role === 'moderador',
+            is_online: m.last_active ? (new Date() - new Date(m.last_active)) < (5 * 60 * 1000) : false
         }));
         res.json(formattedMembers);
     } catch (error) {
@@ -785,8 +1206,8 @@ app.get('/api/community/messages/:channelId', async (req, res) => {
         const { channelId } = req.params;
         const [messages] = await db.query(
             `SELECT 
-                m.id, m.user_id, m.content, m.created_at, m.edited, m.reactions, m.replying_to_message_id,
-                u.name as user, u.profile_picture_url as avatarUrl
+                m.id, m.user_id, m.content, m.created_at, m.edited, m.reactions, m.replying_to_message_id, m.image_url,
+                u.name as user, u.profile_picture_url as avatarUrl, u.role as userRole, u.title as userTitle
              FROM community_messages m 
              JOIN users u ON m.user_id = u.id 
              WHERE m.channel_id = ? 
@@ -808,6 +1229,15 @@ app.get('/api/community/messages/:channelId', async (req, res) => {
             }, {});
         }
         
+        const safeParseJson = (jsonString, fallbackValue) => {
+            try {
+                if(typeof jsonString === 'string') return JSON.parse(jsonString);
+                return fallbackValue;
+            } catch {
+                return fallbackValue;
+            }
+        };
+
         const formattedMessages = messages.map(msg => ({
             id: msg.id,
             user_id: msg.user_id.toString(),
@@ -815,9 +1245,12 @@ app.get('/api/community/messages/:channelId', async (req, res) => {
             avatarUrl: msg.avatarUrl,
             timestamp: msg.created_at,
             text: msg.content,
+            imageUrl: msg.image_url,
             edited: msg.edited,
-            reactions: parseJsonField(msg.reactions) || {},
-            replyingTo: msg.replying_to_message_id ? repliesMap[msg.replying_to_message_id] : null
+            reactions: safeParseJson(msg.reactions, {}) || {},
+            replyingTo: msg.replying_to_message_id ? repliesMap[msg.replying_to_message_id] : null,
+            userRole: msg.userRole,
+            userTitle: msg.userTitle
         }));
         
         res.json(formattedMessages);
@@ -828,12 +1261,62 @@ app.get('/api/community/messages/:channelId', async (req, res) => {
 });
 
 app.post('/api/community/messages', async (req, res) => {
-     try {
-        const { channelId, userId, content, replyingToId } = req.body;
-        await db.query(
-            'INSERT INTO community_messages (channel_id, user_id, content, replying_to_message_id) VALUES (?, ?, ?, ?)',
-            [channelId, userId, content, replyingToId || null]
+    try {
+        const { channelId, userId, content, replyingToId, imageUrl } = req.body;
+        const [result] = await db.query(
+            'INSERT INTO community_messages (channel_id, user_id, content, replying_to_message_id, image_url) VALUES (?, ?, ?, ?, ?)',
+            [channelId, userId, content, replyingToId || null, imageUrl || null]
         );
+        const newMessageId = result.insertId;
+
+        // If this is a reply, mark the original notification as read for the replier
+        if (replyingToId) {
+            try {
+                // Find notifications for the current user about the message they are replying to
+                // and mark them as read. This handles both mentions and replies.
+                await db.query(
+                    'UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND community_message_id = ? AND is_read = FALSE',
+                    [userId, replyingToId]
+                );
+                console.log(`[REPLY] Marked notification as read for user ${userId} regarding message ${replyingToId}.`);
+            } catch(e) {
+                console.error(`[REPLY] Failed to mark notification as read for user ${userId}:`, e);
+            }
+        }
+
+        const [allUsers] = await db.query('SELECT id, name FROM users');
+        const mentionedUserIds = new Set();
+        const currentUserId = parseInt(userId, 10);
+
+        allUsers.forEach(user => {
+            const mentionRegex = new RegExp(`@${user.name.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}(?!\\w)`, 'g');
+            if (content.match(mentionRegex)) {
+                if (user.id !== currentUserId) {
+                    mentionedUserIds.add(user.id);
+                }
+            }
+        });
+
+        for (const mentionedUserId of mentionedUserIds) {
+            await db.query(
+                'INSERT INTO notifications (user_id, type, related_user_id, community_message_id, channel_id) VALUES (?, ?, ?, ?, ?)',
+                [mentionedUserId, 'mention', currentUserId, newMessageId, channelId]
+            );
+        }
+
+        if (replyingToId) {
+            const [[originalMessage]] = await db.query('SELECT user_id FROM community_messages WHERE id = ?', [replyingToId]);
+            if (originalMessage) {
+                const originalAuthorId = originalMessage.user_id;
+                if (originalAuthorId !== currentUserId && !mentionedUserIds.has(originalAuthorId)) {
+                   await db.query(
+                       'INSERT INTO notifications (user_id, type, related_user_id, community_message_id, channel_id) VALUES (?, ?, ?, ?, ?)',
+                       [originalAuthorId, 'reply', currentUserId, newMessageId, channelId]
+                   );
+                }
+            }
+        }
+
         res.status(201).json({ message: 'Mensaje enviado.' });
     } catch (error) {
         console.error("[POST MESSAGE] ERROR:", error);
@@ -878,6 +1361,7 @@ app.delete('/api/community/messages/:messageId', async (req, res) => {
             return res.status(403).json({ message: 'No tienes permiso para eliminar este mensaje.' });
         }
         
+        await db.query('DELETE FROM notifications WHERE community_message_id = ?', [messageId]);
         await db.query('DELETE FROM community_messages WHERE id = ?', [messageId]);
         res.status(200).json({ message: 'Mensaje eliminado.' });
     } catch (error) {
@@ -894,7 +1378,16 @@ app.post('/api/community/messages/:messageId/react', async (req, res) => {
         const [messages] = await db.query('SELECT reactions FROM community_messages WHERE id = ?', [messageId]);
         if (messages.length === 0) return res.status(404).json({ message: 'Mensaje no encontrado.' });
 
-        let reactions = parseJsonField(messages[0].reactions) || {};
+        const safeParseJson = (jsonString, fallbackValue) => {
+            try {
+                if(typeof jsonString === 'string') return JSON.parse(jsonString);
+                return fallbackValue;
+            } catch {
+                return fallbackValue;
+            }
+        };
+
+        let reactions = safeParseJson(messages[0].reactions, {}) || {};
 
         if (!reactions[emoji]) {
             reactions[emoji] = [];
@@ -918,6 +1411,115 @@ app.post('/api/community/messages/:messageId/react', async (req, res) => {
     } catch (error) {
         console.error("[REACT MESSAGE] ERROR:", error);
         res.status(500).json({ message: "Error al reaccionar al mensaje." });
+    }
+});
+
+// --- Notification Endpoints ---
+app.get('/api/notifications/unread-count/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const [[{ totalUnread }]] = await db.query(
+            "SELECT COUNT(*) as totalUnread FROM notifications WHERE user_id = ? AND is_read = FALSE AND (type = 'mention' OR type = 'reply')",
+            [userId]
+        );
+        res.json({ totalUnread: Number(totalUnread) });
+    } catch (error) {
+        console.error('[GET UNREAD COUNT] ERROR:', error);
+        res.status(500).json({ message: "Error al obtener contador de no leídos." });
+    }
+});
+
+app.get('/api/notifications/profile/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { allAchievements } = require('./data/achievementsData.js');
+
+        const [dbNotifications] = await db.query(
+            `SELECT id, achievement_id, created_at
+             FROM notifications
+             WHERE user_id = ? AND type = 'achievement'
+             ORDER BY created_at DESC`,
+            [userId]
+        );
+
+        const achievementsMap = new Map(allAchievements.map(ach => [ach.id, ach]));
+
+        const formattedNotifications = dbNotifications.map(n => {
+            const achievement = achievementsMap.get(n.achievement_id);
+            if (!achievement) return null;
+            return {
+                id: n.id,
+                type: 'achievement',
+                icon: achievement.icon,
+                title: '¡Logro Desbloqueado!',
+                message: `Conseguiste el logro: ${achievement.name}`,
+                time: n.created_at
+            };
+        }).filter(Boolean);
+
+        res.json(formattedNotifications);
+    } catch (error) {
+        console.error('[GET PROFILE NOTIFICATIONS] ERROR:', error);
+        res.status(500).json({ message: "Error al obtener notificaciones de perfil." });
+    }
+});
+
+
+app.get('/api/notifications/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const [notifications] = await db.query(
+            `SELECT
+                n.id,
+                n.type,
+                n.is_read,
+                n.created_at,
+                n.community_message_id as messageId,
+                n.channel_id as channelId,
+                related_user.name as fromUser,
+                cm.content as messageSnippet,
+                replied_cm.content as repliedTo,
+                ch.name as channel
+            FROM notifications n
+            LEFT JOIN users related_user ON n.related_user_id = related_user.id
+            LEFT JOIN community_messages cm ON n.community_message_id = cm.id
+            LEFT JOIN community_channels ch ON n.channel_id = ch.id
+            LEFT JOIN community_messages replied_cm ON cm.replying_to_message_id = replied_cm.id
+            WHERE n.user_id = ? AND (n.type = 'mention' OR n.type = 'reply')
+            ORDER BY n.created_at DESC`,
+            [userId]
+        );
+        const formatted = notifications.map(n => ({
+            id: n.id,
+            type: n.type,
+            is_read: !!n.is_read,
+            icon: n.type === 'mention' ? '@' : '💬',
+            fromUser: n.fromUser,
+            channel: n.channel,
+            channelId: n.channelId,
+            messageId: n.messageId,
+            messageSnippet: n.messageSnippet,
+            repliedTo: n.repliedTo || undefined,
+            time: n.created_at
+        }));
+        res.json(formatted);
+    } catch (error) {
+        console.error('[GET NOTIFICATIONS] ERROR:', error);
+        res.status(500).json({ message: "Error al obtener notificaciones." });
+    }
+});
+
+app.put('/api/notifications/mark-all-read/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        await db.query(
+            "UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND (type = 'mention' OR type = 'reply')",
+            [userId]
+        );
+        res.status(200).json({ message: 'Notificaciones marcadas como leídas.' });
+    } catch (error) {
+        console.error('[MARK READ] ERROR:', error);
+        res.status(500).json({ message: "Error al marcar notificaciones como leídas." });
     }
 });
 
@@ -1005,7 +1607,15 @@ app.put('/api/admin/users/:id/achievements', async (req, res) => {
         const [users] = await db.query('SELECT unlocked_achievements FROM users WHERE id = ?', [id]);
         if (users.length === 0) return res.status(404).json({ message: 'Usuario no encontrado.' });
         
-        let unlockedIds = new Set(parseJsonField(users[0].unlocked_achievements) || []);
+        const safeParseJson = (jsonString, fallbackValue) => {
+            try {
+                if(typeof jsonString === 'string') return JSON.parse(jsonString);
+                return fallbackValue
+            } catch {
+                return fallbackValue
+            }
+        };
+        let unlockedIds = new Set(safeParseJson(users[0].unlocked_achievements, []) || []);
         if (unlocked) {
             unlockedIds.add(String(achievementId));
         } else {

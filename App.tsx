@@ -9,6 +9,8 @@ import ComunidadPage from './pages/ComunidadPage';
 import ContactoPage from './pages/ContactoPage';
 import PerfilPage from './pages/PerfilPage';
 import AdminPage from './pages/AdminPage';
+import CanjearPage from './pages/CanjearPage';
+import NotificacionesPage from './pages/NotificacionesPage';
 import PoliticaPrivacidadPage from './pages/PoliticaPrivacidadPage';
 import TerminosUsoPage from './pages/TerminosUsoPage';
 import PoliticaCookiesPage from './pages/PoliticaCookiesPage';
@@ -16,7 +18,8 @@ import SobreNosotrosPage from './pages/SobreNosotrosPage';
 import type { Page, User, Notification, GamificationAction } from './types';
 
 const App: React.FC = () => {
-  const [currentPage, setCurrentPage] = useState<Page>('home');
+  const [currentPage, _setCurrentPage] = useState<Page>('home');
+  const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(() => {
     try {
       const savedUser = localStorage.getItem('ecoUser');
@@ -27,6 +30,38 @@ const App: React.FC = () => {
     }
   });
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  
+  const setCurrentPage = (page: Page, params?: { userId?: string }) => {
+    if (page === 'perfil' && params?.userId) {
+      setViewingProfileId(params.userId);
+    } else {
+      setViewingProfileId(null);
+    }
+    _setCurrentPage(page);
+    window.scrollTo(0,0);
+  };
+
+  const fetchUnreadCount = useCallback(async () => {
+    if (!user) {
+      setUnreadCount(0);
+      return;
+    }
+    try {
+      const response = await fetch(`http://localhost:3001/api/notifications/unread-count/${user.id}`);
+      if (response.ok) {
+        const data = await response.json();
+        setUnreadCount(data.totalUnread);
+      }
+    } catch (error) {
+      console.error("Failed to fetch unread count:", error);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchUnreadCount();
+  }, [fetchUnreadCount]);
+
 
   useEffect(() => {
     try {
@@ -49,7 +84,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleUserAction = useCallback(async (action: GamificationAction, payload?: any) => {
-    if (!user || user.role === 'dueño') return;
+    if (!user) return; // Admins can now earn achievements, so restriction removed.
 
     // Daily login check remains on client to prevent unnecessary API calls
     if (action === 'daily_login') {
@@ -82,19 +117,22 @@ const App: React.FC = () => {
   }, [user, addNotification]);
   
   const handleLogin = (newUser: User | null) => {
+    setUser(newUser); // Set user immediately
     if (!newUser) {
-      setUser(null);
+      setUnreadCount(0);
       return;
     }
     
-    const today = new Date().toISOString().split('T')[0];
-    if (newUser.lastLogin !== today && newUser.role !== 'dueño') {
-        handleUserAction('daily_login');
-        // The user object will be updated by the response from handleUserAction
-    } else {
-        setUser(newUser);
-    }
+    // Defer side-effects until after state update
+    setTimeout(() => {
+      fetchUnreadCount(); // Fetch unread count for the new user
+      const today = new Date().toISOString().split('T')[0];
+      if (newUser.lastLogin !== today) {
+          handleUserAction('daily_login');
+      }
+    }, 0);
   };
+
 
   const updateUser = useCallback((updatedUser: User) => {
     setUser(updatedUser);
@@ -114,13 +152,17 @@ const App: React.FC = () => {
       case 'noticias':
         return <NoticiasPage user={user} isAdminMode={isAdminMode} />;
       case 'comunidad':
-        return <ComunidadPage user={user} onUserAction={handleUserAction} />;
+        return <ComunidadPage user={user} onUserAction={handleUserAction} onNewMessage={fetchUnreadCount} onViewProfile={(userId) => setCurrentPage('perfil', { userId })} />;
       case 'contacto':
         return <ContactoPage />;
       case 'perfil':
-        return <PerfilPage user={user} updateUser={updateUser} setCurrentPage={setCurrentPage} />;
+        return <PerfilPage user={user} updateUser={updateUser} setCurrentPage={setCurrentPage} viewingProfileId={viewingProfileId} />;
       case 'admin':
         return isAdminMode ? <AdminPage user={user} updateUser={updateUser} /> : <HomePage setCurrentPage={setCurrentPage} user={user} isAdminMode={isAdminMode} />;
+      case 'canjear':
+        return <CanjearPage user={user} onUserUpdate={updateUser} addNotification={addNotification} isAdminMode={isAdminMode} />;
+      case 'notificaciones':
+        return <NotificacionesPage user={user} setCurrentPage={setCurrentPage} onNotificationsViewed={fetchUnreadCount} />;
       case 'politica-privacidad':
         return <PoliticaPrivacidadPage />;
       case 'terminos-uso':
@@ -142,6 +184,7 @@ const App: React.FC = () => {
           user={user}
           setUser={handleLogin}
           notifications={notifications}
+          unreadCount={unreadCount}
         >
           {renderPage()}
         </Layout>

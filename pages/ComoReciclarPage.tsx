@@ -81,7 +81,7 @@ const ComoReciclarPage: React.FC<{ user: User | null, onUserAction: (action: Gam
     const videoRef = useRef<HTMLVideoElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
 
-    const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.API_KEY || '' }), []);
+    const ai = useMemo(() => new GoogleGenAI({ apiKey: process.env.API_KEY as string }), []);
 
     useEffect(() => {
         const fetchGuides = async () => {
@@ -176,6 +176,7 @@ const ComoReciclarPage: React.FC<{ user: User | null, onUserAction: (action: Gam
                     }
                 }
             });
+            // FIX: The response text is directly on the .text property.
             const resultText = response.text;
             const result = JSON.parse(resultText);
             onUserAction('identify_object');
@@ -337,12 +338,11 @@ const ComoReciclarPage: React.FC<{ user: User | null, onUserAction: (action: Gam
             {isQuizModalOpen && (
                  <div className="modal-backdrop">
                     <div className="modal-content !max-w-2xl !max-h-[600px] !bg-surface !text-text-main">
-                       {/* FIX: Add missing userHighScore prop to TriviaGame. */}
                        <TriviaGame 
                             questions={quizQuestions} 
                             onComplete={handleQuizComplete} 
                             onClose={() => setIsQuizModalOpen(false)}
-                            userHighScore={0}
+                            userHighScore={user?.stats.gamesPlayed || 0}
                        />
                     </div>
                 </div>

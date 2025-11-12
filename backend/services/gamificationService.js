@@ -1,4 +1,3 @@
-
 const { allAchievements } = require('../data/achievementsData');
 
 const actionPoints = {
@@ -11,28 +10,32 @@ const actionPoints = {
 };
 
 const processAction = (user, action, payload) => {
-    // Admins don't participate in the gamification system
-    if (user.role === 'dueño' || user.role === 'moderador') {
-        return { updatedUser: user, notifications: [] };
-    }
-
     const updatedUser = { ...user };
-    const stats = updatedUser.stats || {};
-    const unlockedAchievements = new Set(updatedUser.unlocked_achievements || []);
-    
-    // Initialize stats if they don't exist
-    stats.messagesSent = stats.messagesSent || 0;
-    stats.pointsVisited = stats.pointsVisited || 0;
-    stats.reportsMade = stats.reportsMade || 0;
-    stats.dailyLogins = stats.dailyLogins || 0;
-    stats.completedQuizzes = stats.completedQuizzes || [];
-    stats.quizzesCompleted = stats.quizzesCompleted || 0;
-    stats.gamesPlayed = stats.gamesPlayed || 0;
-    stats.objectsIdentified = stats.objectsIdentified || 0;
-    
     const notifications = [];
     let pointsToAdd = 0;
+    
+    let stats = {};
+    try {
+        if (typeof user.stats === 'string' && user.stats.trim().startsWith('{')) {
+            stats = JSON.parse(user.stats);
+        } else if (typeof user.stats === 'object' && user.stats !== null) {
+            stats = user.stats; // Already an object
+        }
+    } catch (e) { console.warn(`[Gamification] Corrupt stats for user ${user.id}. Resetting.`); }
+    
+    let unlockedAchievements = new Set();
+    try {
+        if (typeof user.unlocked_achievements === 'string' && user.unlocked_achievements.trim().startsWith('[')) {
+            const parsed = JSON.parse(user.unlocked_achievements);
+            if(Array.isArray(parsed)) unlockedAchievements = new Set(parsed);
+        } else if (Array.isArray(user.unlocked_achievements)) {
+            unlockedAchievements = new Set(user.unlocked_achievements);
+        }
+    } catch (e) { console.warn(`[Gamification] Corrupt achievements for user ${user.id}. Resetting.`); }
 
+    const defaultStats = { messagesSent: 0, pointsVisited: 0, reportsMade: 0, dailyLogins: 0, completedQuizzes: [], quizzesCompleted: 0, gamesPlayed: 0, objectsIdentified: 0 };
+    stats = { ...defaultStats, ...stats };
+    
     if (action === 'complete_game') {
         pointsToAdd = payload?.points || 0;
     } else {
@@ -69,7 +72,6 @@ const processAction = (user, action, payload) => {
         });
     }
 
-    // Check for new achievements
     allAchievements.forEach(achievementDef => {
         if (!unlockedAchievements.has(achievementDef.id)) {
             let isUnlocked = false;
@@ -92,7 +94,8 @@ const processAction = (user, action, payload) => {
                     type: 'achievement',
                     title: '¡Logro Desbloqueado!',
                     message: `Conseguiste el logro: ${achievementDef.name}`,
-                    icon: achievementDef.icon
+                    icon: achievementDef.icon,
+                    achievementId: achievementDef.id
                 });
             }
         }

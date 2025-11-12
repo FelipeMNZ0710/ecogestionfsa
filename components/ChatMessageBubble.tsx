@@ -41,11 +41,11 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({ message, onNaviga
     const renderMessageContent = () => {
         const text = message.text;
         const buttonRegex = /\[BUTTON: (.*?)\]\((.*?)\)/g;
-        const buttons: { text: string; page: Page }[] = [];
+        const buttons: { text: string; url: string }[] = [];
         let match;
 
         while ((match = buttonRegex.exec(text)) !== null) {
-            buttons.push({ text: match[1], page: match[2] as Page });
+            buttons.push({ text: match[1], url: match[2] });
         }
         
         const cleanedText = text.replace(buttonRegex, '').trim();
@@ -53,6 +53,10 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({ message, onNaviga
         const createMarkup = (txt: string) => {
             const sanitized = txt.endsWith('```') ? txt + '\u00A0' : txt;
             return { __html: marked.parse(sanitized) };
+        };
+
+        const handleButtonClick = (url: string) => {
+            onNavigate(url as Page);
         };
 
         return (
@@ -63,7 +67,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({ message, onNaviga
                         {buttons.map((btn, index) => (
                             <button
                                 key={index}
-                                onClick={() => onNavigate(btn.page)}
+                                onClick={() => handleButtonClick(btn.url)}
                                 className="chat-action-button"
                             >
                                 {btn.text}

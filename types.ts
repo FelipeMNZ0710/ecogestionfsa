@@ -8,6 +8,8 @@ export type Page =
   | 'contacto'
   | 'perfil'
   | 'admin'
+  | 'canjear'
+  | 'notificaciones'
   | 'politica-privacidad'
   | 'terminos-uso'
   | 'politica-cookies'
@@ -308,14 +310,14 @@ export interface CommunityMessage {
     user_id: string;
     user: string;
     avatarUrl?: string;
-    avatarInitials: string;
-    avatarColor: string;
     timestamp: Date;
     text: string;
     imageUrl?: string;
     edited?: boolean;
     reactions?: Reaction;
     replyingTo?: ReplyInfo;
+    userRole?: UserRole;
+    userTitle?: string;
 }
 
 // --- Chatbot Types ---
@@ -336,4 +338,19 @@ export interface ContactMessage {
   message: string;
   status: 'unread' | 'read' | 'archived';
   submitted_at: string;
+}
+
+// --- Rewards Types ---
+export type RewardCategory = 'Descuentos' | 'Digital' | 'Donaciones' | 'Productos';
+
+export interface Reward {
+  id: string;
+  title: string;
+  description: string;
+  cost: number;
+  category: RewardCategory;
+  image: string;
+  stock?: number; // Optional: for limited rewards
+  fileName?: string;
+  fileData?: string; // base64 encoded
 }

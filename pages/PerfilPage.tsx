@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useRef } from 'react';
 import type { User, Achievement, Page } from '../types';
 import ProfileAvatar from '../components/ProfileAvatar';
@@ -162,7 +160,18 @@ const getNextLevelInfo = (points: number) => {
     return { nextLevel, progress, pointsToNext };
 };
 
-const PerfilPage: React.FC<{ user: User | null, updateUser: (user: User) => void, setCurrentPage: (page: Page) => void }> = ({ user, updateUser, setCurrentPage }) => {
+interface PerfilPageProps {
+    user: User | null;
+    updateUser: (user: User) => void;
+    setCurrentPage: (page: Page, params?: { userId?: string }) => void;
+    viewingProfileId: string | null;
+}
+
+const PerfilPage: React.FC<PerfilPageProps> = ({ user, updateUser, setCurrentPage, viewingProfileId }) => {
+    const [profileData, setProfileData] = useState<User | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    
     const [isAchievementsModalOpen, setIsAchievementsModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [croppingState, setCroppingState] = useState<{
@@ -170,7 +179,49 @@ const PerfilPage: React.FC<{ user: User | null, updateUser: (user: User) => void
     }>({ isOpen: false, imageSrc: null, aspect: 1, type: 'avatar' });
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    if (!user) {
+    const isOwnProfile = !viewingProfileId || viewingProfileId === user?.id;
+
+    useEffect(() => {
+        const fetchProfile = async () => {
+            if (!viewingProfileId) return;
+            setIsLoading(true);
+            setError(null);
+            try {
+                const response = await fetch(`http://localhost:3001/api/users/profile/${viewingProfileId}`);
+                
+                const contentType = response.headers.get("content-type");
+                if (!response.ok || !contentType || !contentType.includes("application/json")) {
+                    const errorText = await response.text();
+                    try {
+                        const errorData = JSON.parse(errorText);
+                        throw new Error(errorData.message || 'Perfil no encontrado.');
+                    } catch {
+                        throw new Error("El servidor devolvió una respuesta inesperada. Esto puede deberse a un error general de la aplicación.");
+                    }
+                }
+                
+                const data = await response.json();
+                setProfileData(data);
+            } catch (err) {
+                console.error(err);
+                setError(err instanceof Error ? err.message : 'No se pudo cargar el perfil.');
+                setProfileData(null);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        if (isOwnProfile) {
+            setProfileData(user);
+            setIsLoading(false);
+            setError(null);
+        } else {
+            fetchProfile();
+        }
+    }, [viewingProfileId, user, isOwnProfile]);
+
+
+    if (!user && isOwnProfile) {
         return (
             <div className="flex items-center justify-center pt-20 h-screen text-center">
                 <div>
@@ -180,8 +231,34 @@ const PerfilPage: React.FC<{ user: User | null, updateUser: (user: User) => void
             </div>
         );
     }
+
+    if (isLoading) {
+        return (
+             <div className="pt-20 h-screen flex items-center justify-center">
+                <div className="text-center text-text-secondary p-8">
+                    <svg className="animate-spin h-8 w-8 text-primary mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    Cargando perfil...
+                </div>
+            </div>
+        )
+    }
+
+    if (error || !profileData) {
+         return (
+            <div className="flex items-center justify-center pt-20 h-screen text-center">
+                <div>
+                    <h1 className="text-2xl font-bold text-red-400">{error || 'Perfil no encontrado'}</h1>
+                    <p className="text-text-secondary mt-2">No pudimos encontrar los datos de este usuario.</p>
+                     <button onClick={() => setCurrentPage('comunidad')} className="cta-button mt-6">
+                        Volver a la Comunidad
+                    </button>
+                </div>
+            </div>
+        );
+    }
     
     const handleUpdateUser = async (updatedFields: Partial<User>) => {
+        if (!user) return;
         try {
             const response = await fetch(`http://localhost:3001/api/users/profile/${user.id}`, {
                 method: 'PUT',
@@ -202,6 +279,7 @@ const PerfilPage: React.FC<{ user: User | null, updateUser: (user: User) => void
     };
     
     const handleToggleAchievement = async (achievementId: string, unlocked: boolean) => {
+        if (!user) return;
         try {
             const response = await fetch(`http://localhost:3001/api/users/${user.id}/achievements`, {
                 method: 'PUT',
@@ -242,29 +320,22 @@ const PerfilPage: React.FC<{ user: User | null, updateUser: (user: User) => void
         }
     };
     
-    const isAdminMode = user.role === 'dueño' || user.role === 'moderador';
-    const { name: levelName, icon: levelIcon } = getUserLevel(user.points);
-    const { nextLevel, progress, pointsToNext } = getNextLevelInfo(user.points);
-    const unlockedAchievementsCount = user.achievements.filter(a => a.unlocked).length;
-    const latestUnlocked = user.achievements.filter(a => a.unlocked).slice(-4).reverse();
+    const isAdminMode = user?.role === 'dueño' || user?.role === 'moderador';
+    const { name: levelName, icon: levelIcon } = getUserLevel(profileData.points);
+    const { nextLevel, progress, pointsToNext } = getNextLevelInfo(profileData.points);
+    const unlockedAchievementsCount = profileData.achievements.filter(a => a.unlocked).length;
+    const latestUnlocked = profileData.achievements.filter(a => a.unlocked).slice(-4).reverse();
     
-    const activityData = [
-        { icon: '🎮', text: `Completaste "Súper Trivia"`, points: 100, time: 'hace 2 horas' },
-        { icon: '📍', text: 'Check-in en "Plaza San Martín"', points: 25, time: 'ayer' },
-        { icon: '✅', text: 'Completaste el quiz de Plásticos', points: 50, time: 'hace 2 días' },
-        { icon: '💬', text: 'Enviaste 5 mensajes en #general', points: 25, time: 'hace 3 días' },
-    ];
-
     return (
         <>
             <AchievementsModal 
                 isOpen={isAchievementsModalOpen} 
                 onClose={() => setIsAchievementsModalOpen(false)} 
-                user={user} 
-                isAdminMode={user.role === 'dueño'}
+                user={profileData} 
+                isAdminMode={isOwnProfile && isAdminMode && user.role === 'dueño'}
                 onToggleAchievement={handleToggleAchievement}
             />
-            <ProfileEditModal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} user={user} onSave={handleUpdateUser} />
+            {isOwnProfile && <ProfileEditModal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} user={profileData} onSave={handleUpdateUser} />}
             
             {croppingState.isOpen && croppingState.imageSrc && (
                 <ImageCropModal 
@@ -279,38 +350,42 @@ const PerfilPage: React.FC<{ user: User | null, updateUser: (user: User) => void
                 <div className="max-w-4xl mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
                     
                     <div className="profile-header-card animate-fade-in-up">
-                        <div className="profile-banner" style={{backgroundImage: `url(${user.bannerUrl || 'https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?q=80&w=800&auto=format&fit=crop'})`}}>
-                            <div className="edit-overlay" onClick={() => { fileInputRef.current?.setAttribute('data-type', 'banner'); fileInputRef.current?.click(); }} title="Cambiar banner">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                            </div>
+                        <div className="profile-banner" style={{backgroundImage: `url(${profileData.bannerUrl || 'https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?q=80&w=800&auto=format&fit=crop'})`}}>
+                            {isOwnProfile && (
+                                <div className="edit-overlay" onClick={() => { fileInputRef.current?.setAttribute('data-type', 'banner'); fileInputRef.current?.click(); }} title="Cambiar banner">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                                </div>
+                            )}
                         </div>
                         <div className="profile-banner-overlay"></div>
                         <div className="relative p-6 flex flex-col sm:flex-row items-center sm:items-end gap-6">
                             <div className="profile-avatar-wrapper flex-shrink-0">
-                                <input
-                                    type="file"
-                                    ref={fileInputRef}
-                                    onChange={(e) => handleFileChange(e, e.target.getAttribute('data-type') as 'avatar' | 'banner')}
-                                    className="hidden"
-                                    accept="image/png, image/jpeg, image/webp"
-                                />
-                                {user.profilePictureUrl ? <img src={user.profilePictureUrl} alt="Foto de perfil" className="profile-avatar" /> : <div className="profile-avatar bg-surface"><ProfileAvatar /></div>}
+                                {isOwnProfile && <input type="file" ref={fileInputRef} onChange={(e) => handleFileChange(e, e.target.getAttribute('data-type') as 'avatar' | 'banner')} className="hidden" accept="image/png, image/jpeg, image/webp" />}
+                                {profileData.profilePictureUrl ? <img src={profileData.profilePictureUrl} alt="Foto de perfil" className="profile-avatar" /> : <div className="profile-avatar bg-surface"><ProfileAvatar /></div>}
                                 <div className="profile-level-badge" title={levelName}>{levelIcon}</div>
-                                <div className="edit-overlay rounded-full" onClick={() => { fileInputRef.current?.setAttribute('data-type', 'avatar'); fileInputRef.current?.click(); }} title="Cambiar foto de perfil">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                                </div>
+                                {isOwnProfile && (
+                                    <div className="edit-overlay rounded-full" onClick={() => { fileInputRef.current?.setAttribute('data-type', 'avatar'); fileInputRef.current?.click(); }} title="Cambiar foto de perfil">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                                    </div>
+                                )}
                             </div>
                             <div className="flex-1 text-center sm:text-left">
-                                <h1 className="text-3xl font-bold font-display text-text-main">{user.name}</h1>
-                                <p className="text-primary font-semibold">{user.title || levelName}</p>
-                                <p className="text-sm text-text-secondary mt-2 max-w-md">{user.bio || '¡Un miembro activo de la comunidad EcoGestión!'}</p>
+                                <h1 className="text-3xl font-bold font-display text-text-main">{profileData.name}</h1>
+                                <p className="text-primary font-semibold">{profileData.title || levelName}</p>
+                                <p className="text-sm text-text-secondary mt-2 max-w-md">{profileData.bio || '¡Un miembro activo de la comunidad EcoGestión!'}</p>
                             </div>
                             <div className="flex-shrink-0">
-                                <button onClick={() => setIsEditModalOpen(true)} className="cta-button !py-2 !px-4">Editar Perfil</button>
-                                {isAdminMode && (
-                                    <button onClick={() => setCurrentPage('admin')} className="mt-2 w-full text-center py-2 px-4 bg-slate-700 text-slate-200 text-sm rounded-md hover:bg-slate-600">
-                                        Panel Admin
-                                    </button>
+                                {isOwnProfile ? (
+                                    <>
+                                        <button onClick={() => setIsEditModalOpen(true)} className="cta-button !py-2 !px-4">Editar Perfil</button>
+                                        {isAdminMode && (
+                                            <button onClick={() => setCurrentPage('admin')} className="mt-2 w-full text-center py-2 px-4 bg-slate-700 text-slate-200 text-sm rounded-md hover:bg-slate-600">
+                                                Panel Admin
+                                            </button>
+                                        )}
+                                    </>
+                                ) : (
+                                    <button onClick={() => setCurrentPage('comunidad')} className="cta-button !py-2 !px-4">Volver a la Comunidad</button>
                                 )}
                             </div>
                         </div>
@@ -331,26 +406,26 @@ const PerfilPage: React.FC<{ user: User | null, updateUser: (user: User) => void
                         <div className="stat-card">
                             <div className="stat-icon bg-primary/20 text-primary">✨</div>
                             <div>
-                                <div className="stat-value">{user.points.toLocaleString('es-AR')}</div>
+                                <div className="stat-value">{profileData.points.toLocaleString('es-AR')}</div>
                                 <div className="stat-label">EcoPuntos</div>
                             </div>
                         </div>
                         <div className="stat-card">
                             <div className="stat-icon bg-emerald-500/20 text-emerald-400">♻️</div>
                             <div>
-                                <div className="stat-value">{user.kgRecycled.toLocaleString('es-AR')}</div>
+                                <div className="stat-value">{profileData.kgRecycled.toLocaleString('es-AR')}</div>
                                 <div className="stat-label">Kilos Reciclados</div>
                             </div>
                         </div>
                         <div className="stat-card">
                             <div className="stat-icon bg-amber-500/20 text-amber-400">🏆</div>
                             <div>
-                                <div className="stat-value">{unlockedAchievementsCount} / {user.achievements.length}</div>
+                                <div className="stat-value">{unlockedAchievementsCount} / {profileData.achievements.length}</div>
                                 <div className="stat-label">Logros</div>
                             </div>
                         </div>
                     </div>
-                    
+
                     <div className="grid lg:grid-cols-2 gap-8">
                         <div className="modern-card p-6 animate-fade-in-up" style={{ animationDelay: '300ms' }}>
                             <div className="flex justify-between items-center mb-4">
@@ -367,9 +442,14 @@ const PerfilPage: React.FC<{ user: User | null, updateUser: (user: User) => void
                             </div>
                         </div>
                         <div className="modern-card p-6 animate-fade-in-up" style={{ animationDelay: '400ms' }}>
-                             <h3 className="text-xl font-bold font-display text-text-main mb-4">Actividad Reciente</h3>
+                             <h3 className="text-xl font-bold font-display text-text-main mb-4">Actividad (Simulada)</h3>
                              <div className="space-y-2">
-                                {activityData.map((activity, index) => (
+                                {[
+                                    { icon: '🎮', text: `Completó "Súper Trivia"`, points: 100 },
+                                    { icon: '📍', text: 'Check-in en "Plaza San Martín"', points: 25 },
+                                    { icon: '✅', text: 'Completó el quiz de Plásticos', points: 50 },
+                                    { icon: '💬', text: 'Envió 5 mensajes en #general', points: 25 },
+                                ].map((activity, index) => (
                                     <div key={index} className="activity-feed-item">
                                         <div className="activity-icon">{activity.icon}</div>
                                         <div className="flex-grow text-sm">{activity.text}</div>

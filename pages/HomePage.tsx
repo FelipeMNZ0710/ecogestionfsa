@@ -1,4 +1,5 @@
 
+
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import type { Page, User } from '../types';
 import TestimonialsCarousel from '../components/TestimonialsCarousel';
@@ -70,8 +71,7 @@ const AnimatedNumber: React.FC<{ value: number }> = ({ value }) => {
 }
 
 
-// FIX: Changed icon type from JSX.Element to React.ReactNode to resolve namespace error.
-const FeatureCard = ({ icon, title, text }: { icon: React.ReactNode, title: string, text: string }) => (
+const FeatureCard: React.FC<{ icon: React.ReactNode, title: string, text: string }> = ({ icon, title, text }) => (
   <div className="modern-card p-6 text-center fade-in-section">
     <div className="flex justify-center items-center mb-4 h-12 w-12 rounded-full bg-secondary/10 text-secondary mx-auto">{icon}</div>
     <h3 className="text-xl font-display mb-2 text-text-main">{title}</h3>
@@ -143,7 +143,7 @@ const StatsEditModal: React.FC<{
 };
 
 
-const HomePage: React.FC<{setCurrentPage: (page: Page) => void, user: User | null, isAdminMode: boolean}> = ({setCurrentPage, user, isAdminMode}) => {
+const HomePage: React.FC<{setCurrentPage: (page: Page, params?: { userId?: string }) => void, user: User | null, isAdminMode: boolean}> = ({setCurrentPage, user, isAdminMode}) => {
   const { observe } = useIntersectionObserver({ threshold: 0.1 });
   const [impactStats, setImpactStats] = useState<ImpactStats>({ recycledKg: 0, participants: 0, points: 0 });
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -199,7 +199,8 @@ const HomePage: React.FC<{setCurrentPage: (page: Page) => void, user: User | nul
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                   ...newStats,
-                  adminUserId: user.id, // FIX: The backend expects 'adminUserId' for authentication.
+                  // FIX: The backend expects 'adminUserId' for authentication.
+                  adminUserId: user.id, 
               })
           });
           if (!response.ok) {

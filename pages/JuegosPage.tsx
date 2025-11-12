@@ -144,7 +144,7 @@ const GameEditModal: React.FC<{
     const [image, setImage] = useState('');
     const [type, setType] = useState<GameType>('trivia');
     const [learningObjective, setLearningObjective] = useState('');
-    const [payload, setPayload] = useState<Game['payload']>({});
+    const [payload, setPayload] = useState<Game['payload']>({ points: 0 });
 
     const allGameTypes: GameType[] = [
         'trivia', 'memory', 'sorting', 'hangman', 'chain', 'catcher', 'repair',
@@ -313,7 +313,7 @@ const GameEditModal: React.FC<{
         <div className="modal-backdrop" onClick={onClose}>
             <div className="modal-content !max-w-2xl" onClick={e => e.stopPropagation()}>
                 <form onSubmit={handleSubmit} className="p-6">
-                    <h2 className="text-xl font-bold text-text-main mb-4">{game ? 'Editar Juego' : 'Crear Nuevo Juego'}</h2>
+                    <h2 className="text-xl font-bold font-display text-text-main mb-4">{game ? 'Editar Juego' : 'Crear Nuevo Juego'}</h2>
                     <div className="space-y-4 modal-form">
                         <div><label>Título</label><input type="text" value={title} onChange={e => setTitle(e.target.value)} required /></div>
                         <div className="grid grid-cols-2 gap-4">

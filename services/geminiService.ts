@@ -16,10 +16,9 @@ export async function* getGeminiResponseStream(query: string): AsyncGenerator<st
         });
 
         for await (const chunk of responseStream) {
-            const chunkText = chunk.text;
-            if (chunkText) {
-                yield chunkText;
-            }
+            // FIX: chunk.text is a string, which can be empty but not null/undefined.
+            // Yielding it directly is correct.
+            yield chunk.text;
         }
     } catch (error) {
         console.error("Error fetching from Gemini API stream:", error);

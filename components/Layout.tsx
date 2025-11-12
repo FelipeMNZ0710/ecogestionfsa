@@ -8,13 +8,14 @@ import type { Page, User, Notification } from '../types';
 interface LayoutProps {
   children: React.ReactNode;
   currentPage: Page;
-  setCurrentPage: (page: Page) => void;
+  setCurrentPage: (page: Page, params?: { userId?: string }) => void;
   user: User | null;
   setUser: (user: User | null) => void;
   notifications: Notification[];
+  unreadCount: number;
 }
 
-const Layout: React.FC<LayoutProps> = ({ children, currentPage, setCurrentPage, user, setUser, notifications }) => {
+const Layout: React.FC<LayoutProps> = ({ children, currentPage, setCurrentPage, user, setUser, notifications, unreadCount }) => {
   return (
     <div className="bg-background min-h-screen flex flex-col antialiased text-text-main">
       <Header 
@@ -22,6 +23,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentPage, setCurrentPage, 
         setCurrentPage={setCurrentPage} 
         user={user} 
         setUser={setUser}
+        unreadCount={unreadCount}
       />
       <main className="flex-1 w-full">
         {children}

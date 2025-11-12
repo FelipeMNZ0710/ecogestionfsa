@@ -3,8 +3,6 @@ import Map, { Marker, NavigationControl, Source, Layer } from 'react-map-gl/mapl
 import maplibregl from 'maplibre-gl';
 import type { MapRef, MarkerDragEvent } from 'react-map-gl/maplibre';
 import type { LocationStatus, ReportReason } from '../types';
-// FIX: The FillLayer type is exported from 'maplibre-gl', not 'react-map-gl/maplibre'.
-// Fix: The type for a fill layer from maplibre-gl is `FillLayerSpecification`.
 import type { FillLayerSpecification } from 'maplibre-gl';
 import type { Feature, FeatureCollection, Polygon } from 'geojson';
 
@@ -95,9 +93,6 @@ const NewLocationPin: React.FC = () => (
     </div>
 );
 
-// FIX: Added 'source' property to satisfy the FillLayerSpecification type.
-// The type from maplibre-gl requires it, but react-map-gl provides it
-// implicitly when a <Layer> is a child of a <Source>. This fixes the TypeScript error.
 const accuracyCircleLayer: FillLayerSpecification = {
     id: 'user-accuracy-circle-fill',
     type: 'fill',

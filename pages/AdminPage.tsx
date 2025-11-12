@@ -242,7 +242,7 @@ const MessagesPanel: React.FC<{ messages: ContactMessage[], onUpdateStatus: (id:
     );
 };
 
-const ReportsPanel: React.FC<{ reports: Report[], onUpdateStatus: (id: number, status: ReportStatus) => void, onDelete: (id: number) => void }> = ({ reports, onUpdateStatus, onDelete }) => {
+const ReportsPanel: React.FC<{ reports: Report[], onUpdateStatus: (id: number, status: ReportStatus) => void, onDelete: (id: number) => void, onImageClick: (src: string) => void }> = ({ reports, onUpdateStatus, onDelete, onImageClick }) => {
     const [statusFilter, setStatusFilter] = useState<ReportStatus | 'all'>('all');
     const [reasonFilter, setReasonFilter] = useState<Report['reason'] | 'all'>('all');
 
@@ -291,7 +291,17 @@ const ReportsPanel: React.FC<{ reports: Report[], onUpdateStatus: (id: number, s
                         </summary>
                         <div className="mt-4 pt-4 border-t border-white/10 text-text-secondary space-y-3">
                             {rep.comment && <p><strong>Comentario:</strong> {rep.comment}</p>}
-                            {rep.imageUrl && <div><p><strong>Imagen Adjunta:</strong></p><img src={rep.imageUrl} alt="Reporte" className="max-w-xs rounded-lg mt-2"/></div>}
+                            {rep.imageUrl && (
+                                <div>
+                                    <p><strong>Imagen Adjunta:</strong></p>
+                                    <img 
+                                        src={rep.imageUrl} 
+                                        alt="Evidencia del reporte" 
+                                        className="max-w-xs rounded-lg mt-2 cursor-pointer transition-transform hover:scale-105"
+                                        onClick={() => onImageClick(rep.imageUrl)}
+                                    />
+                                </div>
+                            )}
                             <div className="flex flex-wrap gap-2">
                                 {rep.status !== 'resolved' && <button onClick={() => onUpdateStatus(rep.id, 'resolved')} className="px-3 py-1 text-sm bg-emerald-500/20 text-emerald-300 rounded-md">Marcar como Resuelto</button>}
                                 {rep.status !== 'dismissed' && <button onClick={() => onUpdateStatus(rep.id, 'dismissed')} className="px-3 py-1 text-sm bg-slate-600 rounded-md">Desestimar</button>}
@@ -393,7 +403,7 @@ const StatisticsPanel: React.FC<{ messages: ContactMessage[], reports: Report[] 
         label: subject,
         value: count,
         color: contactCategoryColors[subject] || '#6b7280',
-    })).sort((a,b) => b.value - a.value);
+    })).sort((a,b) => Number(b.value) - Number(a.value));
 
 
     const totalReports = reports.length;
@@ -415,7 +425,7 @@ const StatisticsPanel: React.FC<{ messages: ContactMessage[], reports: Report[] 
         label: reasonLabels[reason],
         value: reportCountsByReason[reason] || 0,
         color: reportChartColors[reason],
-    })).sort((a,b) => b.value - a.value);
+    })).sort((a,b) => Number(b.value) - Number(a.value));
 
     const topReportedLocations = reports
         .filter(report => report.status === 'pending')
@@ -425,9 +435,7 @@ const StatisticsPanel: React.FC<{ messages: ContactMessage[], reports: Report[] 
         }, {} as Record<string, number>);
         
     const sortedTopLocations = Object.entries(topReportedLocations)
-        // FIX: The `sort` method was causing a TypeScript error because the type of `b` and `a` was not being inferred as a number from Object.entries. Explicitly casting them to Number resolves the issue.
-        // Fix: Explicitly cast values to Number to resolve arithmetic operation error.
-        .sort(([, a], [, b]) => Number(b) - Number(a))
+        .sort((a, b) => Number(b[1]) - Number(a[1]))
         .slice(0, 3);
 
     const topContactSubjects = messages
@@ -438,9 +446,7 @@ const StatisticsPanel: React.FC<{ messages: ContactMessage[], reports: Report[] 
         }, {} as Record<string, number>);
 
     const sortedTopSubjects = Object.entries(topContactSubjects)
-        // FIX: The `sort` method was causing a TypeScript error because the type of `b` and `a` was not being inferred as a number from Object.entries. Explicitly casting them to Number resolves the issue.
-        // Fix: Explicitly cast values to Number to resolve arithmetic operation error.
-        .sort(([, a], [, b]) => Number(b) - Number(a))
+        .sort((a, b) => Number(b[1]) - Number(a[1]))
         .slice(0, 3);
 
     return (
@@ -464,7 +470,7 @@ const StatisticsPanel: React.FC<{ messages: ContactMessage[], reports: Report[] 
                         {sortedTopLocations.length > 0 ? (
                             <ul className="space-y-3">
                                 {sortedTopLocations.map(([name, count]) => (
-                                    <li key={name} className="flex justify-between items-center text-sm">
+                                    <li key={name as string} className="flex justify-between items-center text-sm">
                                         <span className="text-text-secondary truncate pr-2" title={name as string}>{name}</span>
                                         <span className="font-bold text-primary bg-primary/20 px-2.5 py-1 rounded-full flex-shrink-0">{count}</span>
                                     </li>
@@ -479,8 +485,8 @@ const StatisticsPanel: React.FC<{ messages: ContactMessage[], reports: Report[] 
                         {sortedTopSubjects.length > 0 ? (
                             <ul className="space-y-3">
                                 {sortedTopSubjects.map(([subject, count]) => (
-                                    <li key={subject} className="flex justify-between items-center text-sm">
-                                        <span className="text-text-secondary truncate pr-2" title={subject}>{subject}</span>
+                                    <li key={subject as string} className="flex justify-between items-center text-sm">
+                                        <span className="text-text-secondary truncate pr-2" title={subject as string}>{subject}</span>
                                         <span className="font-bold text-blue-400 bg-blue-500/20 px-2.5 py-1 rounded-full flex-shrink-0">{count}</span>
                                     </li>
                                 ))}
@@ -511,6 +517,8 @@ const AdminPage: React.FC<AdminPageProps> = ({ user, updateUser }) => {
     const [replyingTo, setReplyingTo] = useState<ContactMessage | null>(null);
     const [editingUser, setEditingUser] = useState<User | null>(null);
     const [isAchievementsModalOpen, setIsAchievementsModalOpen] = useState(false);
+    const [imageViewSrc, setImageViewSrc] = useState<string | null>(null);
+
 
     const fetchAllData = useCallback(async () => {
         if (!user) return;
@@ -533,8 +541,13 @@ const AdminPage: React.FC<AdminPageProps> = ({ user, updateUser }) => {
             const messagesData = await messagesRes.json();
             const reportsData = await reportsRes.json();
             
+            const formattedReports = reportsData.map((rep: any) => ({
+                ...rep,
+                imageUrl: rep.image_url,
+            }));
+
             setMessages(messagesData);
-            setReports(reportsData);
+            setReports(formattedReports);
 
             if(usersRes){
                 const usersData = await usersRes.json();
@@ -565,7 +578,8 @@ const AdminPage: React.FC<AdminPageProps> = ({ user, updateUser }) => {
             if (type === 'messages') {
                 setMessages(prev => prev.map(msg => msg.id === id ? updatedItem : msg));
             } else if (type === 'reports') {
-                setReports(prev => prev.map(rep => rep.id === id ? updatedItem : rep));
+                const formattedReport = {...updatedItem, imageUrl: updatedItem.image_url };
+                setReports(prev => prev.map(rep => rep.id === id ? formattedReport : rep));
             }
         } catch (err) { console.error(`Error actualizando estado para ${type}:`, err); }
     };
@@ -664,7 +678,7 @@ const AdminPage: React.FC<AdminPageProps> = ({ user, updateUser }) => {
         switch (activeTab) {
             case 'statistics': return <StatisticsPanel messages={messages} reports={reports} />;
             case 'messages': return <MessagesPanel messages={messages} onUpdateStatus={(id, status) => handleUpdateStatus('messages', id, status)} onReply={setReplyingTo} onDelete={(id) => handleDelete('messages', id)} />;
-            case 'reports': return <ReportsPanel reports={reports} onUpdateStatus={(id, status) => handleUpdateStatus('reports', id, status)} onDelete={(id) => handleDelete('reports', id)} />;
+            case 'reports': return <ReportsPanel reports={reports} onUpdateStatus={(id, status) => handleUpdateStatus('reports', id, status)} onDelete={(id) => handleDelete('reports', id)} onImageClick={setImageViewSrc} />;
             case 'users': return <UsersPanel users={users} onEdit={setEditingUser} onDelete={(id) => handleDelete('users', id)} onManageAchievements={(u) => { setEditingUser(u); setIsAchievementsModalOpen(true); }} />;
             default: return null;
         }
@@ -676,6 +690,14 @@ const AdminPage: React.FC<AdminPageProps> = ({ user, updateUser }) => {
             <EditUserModal isOpen={!!editingUser && !isAchievementsModalOpen} onClose={() => setEditingUser(null)} user={editingUser} onSave={handleUpdateUser} />
             <AchievementsModal isOpen={isAchievementsModalOpen} onClose={() => { setIsAchievementsModalOpen(false); setEditingUser(null); }} user={editingUser} isAdminMode={user?.role === 'dueño'} onToggleAchievement={handleToggleAchievement} />
             
+            {imageViewSrc && (
+                <div className="modal-backdrop" onClick={() => setImageViewSrc(null)}>
+                    <div className="max-w-4xl max-h-[90vh] p-4 flex items-center justify-center" onClick={e => e.stopPropagation()}>
+                        <img src={imageViewSrc} alt="Vista ampliada del reporte" className="max-w-full max-h-full object-contain rounded-lg shadow-2xl" />
+                    </div>
+                </div>
+            )}
+
             <div className="bg-background pt-20">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
                     <div className="text-center mb-12">

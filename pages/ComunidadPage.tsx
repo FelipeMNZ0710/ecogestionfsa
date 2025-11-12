@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import type { User, GamificationAction, CommunityMessage } from '../types';
+import type { User, GamificationAction, CommunityMessage, Page, UserRole } from '../types';
 
 // --- Types ---
 interface Channel {
@@ -7,12 +7,14 @@ interface Channel {
     name: string;
     description: string;
     admin_only_write?: boolean;
+    unreadCount?: number;
 }
 interface Member {
-    id: string; // Keep as string to match User.id
+    id: string; 
     name: string;
     profile_picture_url: string | null;
     is_admin: boolean;
+    is_online: boolean;
 }
 
 type MessagesState = Record<number, CommunityMessage[]>;
@@ -31,6 +33,14 @@ const getConsistentColor = (name: string) => {
     const color = userColors[Math.abs(hash % userColors.length)];
     colorCache[name] = color;
     return color;
+};
+const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = error => reject(error);
+    });
 };
 
 // --- Sub-Components ---
@@ -108,14 +118,15 @@ const MessageItem: React.FC<{
     setEditingMessage: (msg: CommunityMessage | null) => void;
     onDelete: (messageId: number) => void;
     onToggleReaction: (messageId: number, emoji: string) => void;
-}> = ({ message, isGroupStart, user, isAdmin, setReplyingTo, setEditingMessage, onDelete, onToggleReaction }) => {
+    onViewProfile: (userId: string) => void;
+}> = ({ message, isGroupStart, user, isAdmin, setReplyingTo, setEditingMessage, onDelete, onToggleReaction, onViewProfile }) => {
     const [hovered, setHovered] = useState(false);
     const canInteract = user?.id === message.user_id || isAdmin;
     
     return (
         <div className={`discord-message-item ${isGroupStart ? 'mt-4' : ''}`} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
             {isGroupStart && (
-                <div className="discord-message-avatar">
+                <div className="discord-message-avatar cursor-pointer" onClick={() => onViewProfile(message.user_id)}>
                     {message.avatarUrl ? <img src={message.avatarUrl} alt={message.user} className="w-10 h-10 rounded-full object-cover" />
                     : <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${getConsistentColor(message.user)}`}>{getUserInitials(message.user)}</div>}
                 </div>
@@ -132,7 +143,13 @@ const MessageItem: React.FC<{
 
                 {isGroupStart && (
                     <div className="flex items-baseline space-x-2">
-                        <span className="font-semibold text-[color:var(--header-primary)]">{message.user}</span>
+                        <span className="font-semibold text-[color:var(--header-primary)] cursor-pointer hover:underline" onClick={() => onViewProfile(message.user_id)}>{message.user}</span>
+                        {message.userRole && (message.userRole === 'dueño' || message.userRole === 'moderador') && (
+                            <span className="discord-admin-tag">ADMIN</span>
+                        )}
+                        {message.userTitle && (
+                            <span className="text-xs text-primary font-semibold">{message.userTitle}</span>
+                        )}
                         <span className="text-xs text-[color:var(--text-muted)]">{new Intl.DateTimeFormat('es-ES', { hour: '2-digit', minute: '2-digit' }).format(new Date(message.timestamp))}</span>
                     </div>
                 )}
@@ -167,12 +184,13 @@ const MessageItem: React.FC<{
 };
 
 // --- Main Component ---
-const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: GamificationAction, payload?: any) => void; }> = ({ user, onUserAction }) => {
+const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: GamificationAction, payload?: any) => void; onNewMessage: () => void; onViewProfile: (userId: string) => void; }> = ({ user, onUserAction, onNewMessage, onViewProfile }) => {
     const [channels, setChannels] = useState<Channel[]>([]);
     const [members, setMembers] = useState<Member[]>([]);
     const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
     const [messages, setMessages] = useState<MessagesState>({});
     const [newMessage, setNewMessage] = useState('');
+    const [imageToSend, setImageToSend] = useState<{ file: File, preview: string } | null>(null);
     const [replyingTo, setReplyingTo] = useState<CommunityMessage | null>(null);
     const [editingMessage, setEditingMessage] = useState<CommunityMessage | null>(null);
     const [editedText, setEditedText] = useState('');
@@ -180,15 +198,22 @@ const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: Gamifi
     const [isChannelsOpen, setIsChannelsOpen] = useState(false);
     const [isMembersOpen, setIsMembersOpen] = useState(false);
     const [isCreateChannelModalOpen, setIsCreateChannelModalOpen] = useState(false);
-
+    const [scrollToMessage, setScrollToMessage] = useState<number | null>(null);
+    const [mentionQuery, setMentionQuery] = useState('');
+    const [showMentions, setShowMentions] = useState(false);
+    
+    const mentionStartPosition = useRef<number | null>(null);
     const chatContainerRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const mentionRef = useRef<HTMLDivElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
     
     const isAdmin = user?.role === 'dueño' || user?.role === 'moderador';
 
     const fetchChannels = useCallback(async () => {
         try {
-            const response = await fetch('http://localhost:3001/api/community/channels');
+            const url = user ? `http://localhost:3001/api/community/channels?userId=${user.id}` : 'http://localhost:3001/api/community/channels';
+            const response = await fetch(url);
             const data = await response.json();
             setChannels(data);
             if (data.length > 0 && !activeChannelId) {
@@ -197,7 +222,7 @@ const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: Gamifi
                 setActiveChannelId(null);
             }
         } catch (error) { console.error("Error fetching channels:", error); }
-    }, [activeChannelId]);
+    }, [user, activeChannelId]);
 
     const fetchMembers = useCallback(async () => {
         try {
@@ -219,7 +244,27 @@ const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: Gamifi
     useEffect(() => {
         fetchChannels();
         fetchMembers();
+        const memberInterval = setInterval(fetchMembers, 30000); // Fetch members every 30 seconds for online status
+        return () => clearInterval(memberInterval);
     }, [fetchChannels, fetchMembers]);
+
+    useEffect(() => {
+        const navContextStr = sessionStorage.getItem('navigateToCommunity');
+        if (navContextStr) {
+            sessionStorage.removeItem('navigateToCommunity');
+            try {
+                const context = JSON.parse(navContextStr);
+                if (context.channelId) {
+                    setActiveChannelId(context.channelId);
+                    if (context.messageId) {
+                        setScrollToMessage(context.messageId);
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to parse navigation context", e);
+            }
+        }
+    }, []);
 
     useEffect(() => {
         if (activeChannelId) {
@@ -228,9 +273,12 @@ const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: Gamifi
     }, [activeChannelId, fetchMessages]);
 
     useEffect(() => {
+        if (isLoading) return;
         const chatContainer = chatContainerRef.current;
-        if (chatContainer) setTimeout(() => { chatContainer.scrollTop = chatContainer.scrollHeight }, 100);
-    }, [messages, activeChannelId, isLoading]);
+        if (chatContainer && !scrollToMessage) {
+            setTimeout(() => { chatContainer.scrollTop = chatContainer.scrollHeight }, 100);
+        }
+    }, [messages, activeChannelId, isLoading, scrollToMessage]);
 
     useEffect(() => {
         const textarea = textareaRef.current;
@@ -241,7 +289,13 @@ const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: Gamifi
     }, [newMessage, editedText]);
 
     const handleSendMessage = async () => {
-        if (!newMessage.trim() || !user || activeChannelId === null) return;
+        if ((!newMessage.trim() && !imageToSend) || !user || activeChannelId === null) return;
+        
+        let imageUrl: string | null = null;
+        if (imageToSend) {
+            imageUrl = await fileToBase64(imageToSend.file);
+        }
+
         try {
             await fetch('http://localhost:3001/api/community/messages', {
                 method: 'POST',
@@ -251,12 +305,15 @@ const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: Gamifi
                     userId: user.id,
                     content: newMessage.trim(),
                     replyingToId: replyingTo?.id || null,
+                    imageUrl: imageUrl,
                 }),
             });
             setNewMessage('');
+            setImageToSend(null);
             setReplyingTo(null);
             onUserAction('send_message');
             fetchMessages(activeChannelId);
+            onNewMessage(); // Refresh global unread counts
         } catch (error) { console.error("Error sending message:", error); }
     };
     
@@ -359,7 +416,100 @@ const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: Gamifi
         });
         return items;
     }, [messages, activeChannelId]);
+
+    useEffect(() => {
+        if (scrollToMessage && renderableChatItems.length > 0 && !isLoading) {
+            for (const item of renderableChatItems) {
+                if (item.type === 'message_group' && item.group.some(msg => msg.id === scrollToMessage)) {
+                    const elementId = `message-group-${item.group[0].id}`;
+                    const element = document.getElementById(elementId);
+                    
+                    if (element) {
+                        setTimeout(() => {
+                            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            element.classList.add('highlight');
+                            setTimeout(() => {
+                                element.classList.remove('highlight');
+                            }, 2500);
+                            setScrollToMessage(null);
+                        }, 100);
+                    }
+                    break;
+                }
+            }
+        }
+    }, [renderableChatItems, scrollToMessage, isLoading]);
+
+    const handleTextAreaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        const text = e.target.value;
+        const cursorPosition = e.target.selectionStart;
+
+        const textBeforeCursor = text.substring(0, cursorPosition);
+        const lastAt = textBeforeCursor.lastIndexOf('@');
+        const lastSpaceAfterAt = textBeforeCursor.indexOf(' ', lastAt);
+
+        if (lastAt !== -1 && (lastSpaceAfterAt === -1 || lastSpaceAfterAt < lastAt)) {
+            const query = textBeforeCursor.substring(lastAt + 1);
+            setMentionQuery(query);
+            setShowMentions(true);
+            mentionStartPosition.current = lastAt;
+        } else {
+            setShowMentions(false);
+        }
+        setNewMessage(text);
+    };
+
+    const handleMentionSelect = (name: string) => {
+        if (mentionStartPosition.current === null) return;
+        
+        const prefix = newMessage.substring(0, mentionStartPosition.current);
+        const suffix = newMessage.substring(mentionStartPosition.current + 1 + mentionQuery.length);
+        
+        const newText = `${prefix}@${name} ${suffix.trimStart()}`;
+        setNewMessage(newText);
+        
+        const newCursorPosition = prefix.length + 1 + name.length + 1;
+        setTimeout(() => {
+            textareaRef.current?.focus();
+            textareaRef.current?.setSelectionRange(newCursorPosition, newCursorPosition);
+        }, 0);
+        
+        setShowMentions(false);
+    };
+
+    const mentionSuggestions = useMemo(() => {
+        if (!showMentions) return [];
+        return members.filter(member =>
+            member.name.toLowerCase().includes(mentionQuery.toLowerCase()) &&
+            member.id !== user?.id
+        ).slice(0, 5);
+    }, [showMentions, mentionQuery, members, user]);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (
+                showMentions &&
+                mentionRef.current &&
+                !mentionRef.current.contains(event.target as Node) &&
+                textareaRef.current &&
+                !textareaRef.current.contains(event.target as Node)
+            ) {
+                setShowMentions(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [showMentions]);
     
+    const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (file) {
+            setImageToSend({ file, preview: URL.createObjectURL(file) });
+        }
+    };
+
     const activeChannelInfo = channels.find(c => c.id === activeChannelId);
     const canWrite = user && (!activeChannelInfo?.admin_only_write || isAdmin);
 
@@ -385,7 +535,11 @@ const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: Gamifi
                         {channels.map(channel => (
                             <div key={channel.id} className="group relative">
                                 <a href="#" onClick={(e) => { e.preventDefault(); setActiveChannelId(channel.id); closeSidebars(); }} className={`flex items-center space-x-2 w-full text-left px-2 py-1.5 rounded transition-colors channel-link text-[color:var(--text-muted)] ${activeChannelId === channel.id ? 'active' : ''}`}>
-                                    <span className="text-xl">#</span><span>{channel.name}</span>
+                                    <span className="text-xl">#</span>
+                                    <span className="flex-1 truncate">{channel.name}</span>
+                                    {channel.unreadCount && channel.unreadCount > 0 && (
+                                        <span className="ml-auto bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">{channel.unreadCount}</span>
+                                    )}
                                 </a>
                                 {isAdmin && channel.id !== 1 && (
                                     <button onClick={() => handleDeleteChannel(channel.id)} title="Eliminar canal" className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 hidden group-hover:flex items-center justify-center text-text-muted hover:text-red-400">
@@ -419,31 +573,53 @@ const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: Gamifi
                                     <>
                                         <div className="h-4" />
                                         {renderableChatItems.map((item, index) => {
-                                            if (item.type === 'date_divider') return <DateDivider key={`divider-${index}`} date={item.date} />;
-                                            const group = item.group;
-                                            return (
-                                                <div key={group[0].id} className="discord-message-group">
-                                                    {group.map((message, msgIndex) => {
-                                                        if (editingMessage?.id === message.id) {
-                                                            return (
-                                                                <div key={message.id} className="px-16 py-2">
-                                                                    <textarea value={editedText} onChange={(e) => setEditedText(e.target.value)} className="discord-chat-textarea w-full bg-[color:var(--input-bg)] rounded-md p-2" rows={3}/>
-                                                                    <div className="text-xs mt-1">presiona <strong className="text-primary">Enter</strong> para guardar, <strong className="text-primary">Esc</strong> para cancelar</div>
-                                                                    <button onClick={handleEditMessage} className="text-xs px-2 py-1 bg-primary rounded mt-1">Guardar</button>
-                                                                    <button onClick={() => setEditingMessage(null)} className="text-xs px-2 py-1 ml-2">Cancelar</button>
-                                                                </div>
-                                                            );
-                                                        }
-                                                        return (<MessageItem key={message.id} message={message} isGroupStart={msgIndex === 0} user={user} isAdmin={isAdmin} setReplyingTo={setReplyingTo} setEditingMessage={setEditingMessage} onDelete={handleDeleteMessage} onToggleReaction={handleToggleReaction} />);
-                                                    })}
-                                                </div>
-                                            );
+                                            switch (item.type) {
+                                                case 'date_divider':
+                                                    return <DateDivider key={`divider-${index}`} date={item.date} />;
+                                                case 'message_group':
+                                                    const group = item.group;
+                                                    return (
+                                                        <div key={group[0].id} id={`message-group-${group[0].id}`} className="discord-message-group">
+                                                            {group.map((message, msgIndex) => {
+                                                                if (editingMessage?.id === message.id) {
+                                                                    return (
+                                                                        <div key={message.id} className="px-16 py-2">
+                                                                            <textarea value={editedText} onChange={(e) => setEditedText(e.target.value)} className="discord-chat-textarea w-full bg-[color:var(--input-bg)] rounded-md p-2" rows={3}/>
+                                                                            <div className="text-xs mt-1">presiona <strong className="text-primary">Enter</strong> para guardar, <strong className="text-primary">Esc</strong> para cancelar</div>
+                                                                            <button onClick={handleEditMessage} className="text-xs px-2 py-1 bg-primary rounded mt-1">Guardar</button>
+                                                                            <button onClick={() => setEditingMessage(null)} className="text-xs px-2 py-1 ml-2">Cancelar</button>
+                                                                        </div>
+                                                                    );
+                                                                }
+                                                                return (<MessageItem key={message.id} message={message} isGroupStart={msgIndex === 0} user={user} isAdmin={isAdmin} setReplyingTo={setReplyingTo} setEditingMessage={setEditingMessage} onDelete={handleDeleteMessage} onToggleReaction={handleToggleReaction} onViewProfile={onViewProfile} />);
+                                                            })}
+                                                        </div>
+                                                    );
+                                                default:
+                                                    return null;
+                                            }
                                         })}
                                         <div className="h-4" />
                                     </>
                                 }
                             </div>
-                            <footer className="px-4 pb-4 pt-2 flex-shrink-0">
+                            <footer className="relative px-4 pb-4 pt-2 flex-shrink-0">
+                                 {showMentions && mentionSuggestions.length > 0 && (
+                                    <div ref={mentionRef} className="absolute bottom-full left-0 right-0 mb-1 px-4 z-10">
+                                        <div className="bg-[color:var(--bg-secondary)] border border-black/20 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                                            <div className="p-2 font-bold text-xs text-text-muted">Mencionar a:</div>
+                                            <ul>
+                                                {mentionSuggestions.map(member => (
+                                                    <li key={member.id} onClick={() => handleMentionSelect(member.name)} className="flex items-center gap-2 px-3 py-1.5 hover:bg-[color:var(--bg-hover)] cursor-pointer">
+                                                        {member.profile_picture_url ? <img src={member.profile_picture_url} alt={member.name} className="w-6 h-6 rounded-full object-cover" />
+                                                        : <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs ${getConsistentColor(member.name)}`}>{getUserInitials(member.name)}</div>}
+                                                        <span className="text-sm text-text-normal">{member.name}</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    </div>
+                                )}
                                 {canWrite ? (
                                     <div className="discord-chat-input-wrapper">
                                         {replyingTo && (
@@ -452,10 +628,22 @@ const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: Gamifi
                                                 <button onClick={() => setReplyingTo(null)} className="text-xl">&times;</button>
                                             </div>
                                         )}
-                                        <textarea ref={textareaRef} placeholder={`Enviar mensaje a #${activeChannelInfo?.name}`} className="discord-chat-textarea pt-2"
-                                            value={newMessage} onChange={(e) => setNewMessage(e.target.value)}
-                                            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }} rows={1}
-                                        />
+                                        {imageToSend && (
+                                            <div className="p-2 relative w-24 h-24">
+                                                <img src={imageToSend.preview} alt="Previsualización" className="w-full h-full object-cover rounded-md" />
+                                                <button onClick={() => setImageToSend(null)} className="absolute -top-1 -right-1 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">&times;</button>
+                                            </div>
+                                        )}
+                                        <div className="flex items-start pt-2">
+                                            <button onClick={() => fileInputRef.current?.click()} className="p-2 text-text-muted hover:text-text-main">
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                                            </button>
+                                            <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" accept="image/*" />
+                                            <textarea ref={textareaRef} placeholder={`Enviar mensaje a #${activeChannelInfo?.name}`} className="discord-chat-textarea"
+                                                value={newMessage} onChange={handleTextAreaChange}
+                                                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }} rows={1}
+                                            />
+                                        </div>
                                     </div>
                                 ) : (
                                     <div className="text-center text-sm text-[color:var(--text-muted)] bg-[color:var(--input-bg)] p-3 rounded-lg">{user ? 'Solo los administradores pueden enviar mensajes.' : 'Debes iniciar sesión para enviar mensajes.'}</div>
@@ -468,7 +656,7 @@ const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: Gamifi
                             <h2 className="p-2 text-[color:var(--header-secondary)] text-xs font-bold uppercase flex-shrink-0">Miembros — {members.length}</h2>
                             <div className="flex-1 overflow-y-auto pr-1">
                                 {members.map(member => (
-                                    <div key={member.id} className="flex items-center p-2 rounded-md hover:bg-[color:var(--bg-hover)] cursor-pointer">
+                                    <div key={member.id} className="flex items-center p-2 rounded-md hover:bg-[color:var(--bg-hover)] cursor-pointer" onClick={() => {onViewProfile(member.id); closeSidebars();}}>
                                         <div className="relative mr-3">
                                             {member.profile_picture_url ? (
                                                 <img src={member.profile_picture_url} alt={member.name} className="w-8 h-8 rounded-full object-cover" />
@@ -477,6 +665,7 @@ const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: Gamifi
                                                     {getUserInitials(member.name)}
                                                 </div>
                                             )}
+                                            <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[color:var(--bg-secondary)] ${member.is_online ? 'bg-green-500' : 'bg-slate-500'}`}></div>
                                         </div>
                                         <div className="flex-1 truncate">
                                             <span className="text-sm font-semibold text-[color:var(--text-normal)]">{member.name}</span>

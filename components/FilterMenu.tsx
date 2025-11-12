@@ -12,7 +12,6 @@ interface FilterMenuProps {
 interface FilterItem {
   id: Category;
   title: string;
-  // FIX: Changed icon type from JSX.Element to React.ReactNode to resolve namespace error.
   icon: React.ReactNode;
 }
 

@@ -1,16 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import type { Page } from '../types';
 
 interface FooterProps {
-    setCurrentPage: (page: Page) => void;
+    setCurrentPage: (page: Page, params?: { userId?: string }) => void;
 }
 
 const Footer: React.FC<FooterProps> = ({ setCurrentPage }) => {
-    const [year, setYear] = useState(new Date().getFullYear());
-
-    useEffect(() => {
-        setYear(new Date().getFullYear());
-    }, []);
+    const year = 2025; // Hardcoded as per user request
 
     const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, page: Page) => {
         e.preventDefault();

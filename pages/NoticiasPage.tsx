@@ -76,6 +76,43 @@ const fileToBase64 = (file: File): Promise<string> =>
     reader.onerror = (error) => reject(error);
   });
 
+const optimizeImage = (base64Str: string, maxWidth = 800, maxHeight = 800, quality = 0.8): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.src = base64Str;
+        img.onload = () => {
+             try {
+                const canvas = document.createElement('canvas');
+                let { width, height } = img;
+
+                if (width > height) {
+                    if (width > maxWidth) {
+                        height *= maxWidth / width;
+                        width = maxWidth;
+                    }
+                } else {
+                    if (height > maxHeight) {
+                        width *= maxHeight / height;
+                        height = maxHeight;
+                    }
+                }
+
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) return reject(new Error('No se pudo obtener el contexto del canvas.'));
+                
+                ctx.drawImage(img, 0, 0, width, height);
+                resolve(canvas.toDataURL('image/jpeg', quality));
+            } catch (error) {
+                reject(error);
+            }
+        };
+        img.onerror = (error) => reject(error);
+    });
+};
+
+
 const NewsModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
@@ -185,8 +222,13 @@ const NewsModal: React.FC<{
                                     onChange={async (e) => {
                                         const file = e.target.files?.[0];
                                         if (file) {
-                                            const base64 = await fileToBase64(file);
-                                            handleContentChange(block.id, { ...block, type: 'image', base64Data: base64, mimeType: file.type, imageUrl: undefined });
+                                            try {
+                                                const base64 = await fileToBase64(file);
+                                                const optimizedBase64 = await optimizeImage(base64, 800, 800);
+                                                handleContentChange(block.id, { ...block, type: 'image', base64Data: optimizedBase64, mimeType: file.type, imageUrl: undefined });
+                                            } catch(error) {
+                                                alert("No se pudo procesar la imagen. Intenta con otra.");
+                                            }
                                         }
                                     }}
                                 />
@@ -252,7 +294,15 @@ const NewsModal: React.FC<{
                                             type="file"
                                             onChange={async e => {
                                                 const file = e.target.files?.[0];
-                                                if (file) setImage(await fileToBase64(file));
+                                                if (file) {
+                                                    try {
+                                                        const base64 = await fileToBase64(file);
+                                                        const optimizedBase64 = await optimizeImage(base64);
+                                                        setImage(optimizedBase64);
+                                                    } catch (error) {
+                                                        alert("No se pudo procesar la imagen. Intenta con otra.");
+                                                    }
+                                                }
                                             }}
                                             accept="image/*"
                                             className="hidden"
