@@ -540,6 +540,9 @@ app.get('/api/notifications/:userId', async (req, res) => {
             if (parsed) data = parsed;
         } catch(e) {}
         
+        // Safety check if data is null
+        data = data || {};
+
         return {
              id: row.id,
              type: row.type,
@@ -565,6 +568,9 @@ app.get('/api/notifications/profile/:userId', async (req, res) => {
             const parsed = typeof row.data === 'string' ? JSON.parse(row.data) : row.data; 
             if (parsed) data = parsed;
         } catch(e) {}
+
+        // Safety check if data is null
+        data = data || {};
         
         return {
              id: row.id,

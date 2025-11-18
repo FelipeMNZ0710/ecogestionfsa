@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import type { User, GamificationAction, CommunityMessage, Page, UserRole } from '../types';
 
@@ -519,7 +520,7 @@ const ComunidadPage: React.FC<{ user: User | null; onUserAction: (action: Gamifi
     };
 
     return (
-        <div className="flex w-full" style={{ height: 'calc(100vh - 80px)', marginTop: '80px' }}>
+        <div className="flex w-full" style={{ height: 'calc(100dvh - 80px)', marginTop: '80px' }}>
             <div className="discord-theme flex flex-1 overflow-hidden">
                 <CreateChannelModal isOpen={isCreateChannelModalOpen} onClose={() => setIsCreateChannelModalOpen(false)} onCreate={handleCreateChannel} />
                 {/* Overlay for mobile */}

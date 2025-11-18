@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState, useRef, useMemo, forwardRef, useCallback } from 'react';
 import InteractiveMap from '../components/InteractiveMap';
 import type { LocationData } from '../components/InteractiveMap';
@@ -55,7 +56,7 @@ const LocationCard = forwardRef<HTMLDivElement, {
     return (
         <div ref={ref} className={`modern-card overflow-hidden flex flex-col transition-all duration-200 cursor-pointer relative ${isSelected || isHovered ? 'border-primary bg-surface' : 'border-white/10 bg-surface'}`} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} onClick={onClick} role="button" tabIndex={0} aria-label={`Ver detalles de ${location.name}`}>
             <div className="relative">
-                <img src={location.imageUrls[0]} alt={`Foto de ${location.name}`} className="w-full h-40 object-cover" />
+                <img src={location.imageUrls[0]} alt={`Foto de ${location.name}`} className="w-full h-32 sm:h-40 object-cover" />
                  {user && (
                     <button onClick={(e) => { e.stopPropagation(); onToggleFavorite(location.id); }} className={`absolute top-2 left-2 z-10 p-1.5 rounded-full transition-colors ${isFavorite ? 'text-yellow-400 bg-yellow-400/20' : 'text-slate-400 bg-surface/50 hover:text-yellow-400'}`} title={isFavorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}>
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
@@ -66,22 +67,22 @@ const LocationCard = forwardRef<HTMLDivElement, {
                 </div>
             </div>
             <div className="p-4 flex flex-col flex-grow">
-                <h3 className="font-bold text-lg text-text-main leading-tight pr-20">{location.name}</h3>
+                <h3 className="font-bold text-base sm:text-lg text-text-main leading-tight pr-2">{location.name}</h3>
                 {isAdminMode && (
                     <div className="absolute top-1/2 right-4 -translate-y-1/2 flex gap-2">
                         <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="admin-action-button" title="Editar punto"><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.536L16.732 3.732z" /></svg></button>
                         <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="admin-action-button delete" title="Eliminar punto"><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>
                     </div>
                 )}
-                <p className="text-sm text-text-secondary mt-1">{location.address}</p>
+                <p className="text-xs sm:text-sm text-text-secondary mt-1 truncate">{location.address}</p>
                  {location.distance !== undefined && (
-                    <div className="mt-3 font-semibold text-sm text-primary">
+                    <div className="mt-2 sm:mt-3 font-semibold text-xs sm:text-sm text-primary">
                         📍 Aprox. {location.distance < 1 ? `${Math.round(location.distance * 1000)} m` : `${location.distance.toFixed(1)} km`}
                     </div>
                 )}
-                <div className="flex-grow mt-4">
-                    <div className="flex flex-wrap gap-2">
-                        {location.materials.map(material => (<span key={material} className="px-2 py-1 text-xs bg-slate-700 text-slate-300 font-medium rounded-md">{material}</span>))}
+                <div className="flex-grow mt-3 sm:mt-4">
+                    <div className="flex flex-wrap gap-1 sm:gap-2">
+                        {location.materials.map(material => (<span key={material} className="px-1.5 py-0.5 sm:px-2 sm:py-1 text-[10px] sm:text-xs bg-slate-700 text-slate-300 font-medium rounded-md">{material}</span>))}
                     </div>
                 </div>
             </div>
@@ -878,9 +879,10 @@ const PuntosVerdesPage: React.FC<{
                     </div>
 
 
-                    <div className="grid lg:grid-cols-3 gap-8">
-                        <div className="lg:col-span-1 h-[60vh] lg:h-auto order-2 lg:order-1">
-                            <div className="overflow-y-auto max-h-[60vh] lg:max-h-[calc(100vh-15rem)] pr-2 space-y-4">
+                    <div className="grid lg:grid-cols-3 gap-8 h-[80vh] lg:h-auto">
+                        {/* List Container */}
+                        <div className="lg:col-span-1 h-[40vh] lg:h-[calc(100vh-15rem)] order-2 lg:order-1">
+                            <div className="overflow-y-auto h-full pr-2 space-y-4">
                                 {isLoading ? (
                                     <div className="text-center text-text-secondary p-8">
                                         <svg className="animate-spin h-8 w-8 text-primary mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -911,7 +913,8 @@ const PuntosVerdesPage: React.FC<{
                                 )}
                             </div>
                         </div>
-                        <div className="lg:col-span-2 h-[60vh] lg:h-auto order-1 lg:order-2">
+                        {/* Map Container */}
+                        <div className="lg:col-span-2 h-[40vh] lg:h-[calc(100vh-15rem)] order-1 lg:order-2">
                              <InteractiveMap
                                 ref={mapRef}
                                 locations={displayedLocations.map(l => ({ ...l.mapData, status: l.status, latestReportReason: l.latestReportReason }))}

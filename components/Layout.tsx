@@ -1,3 +1,4 @@
+
 import React from 'react';
 import Header from './Header';
 import Footer from './Footer';
@@ -35,7 +36,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentPage, setCurrentPage, 
 
   return (
     <div 
-      className="bg-background min-h-screen flex flex-col antialiased text-text-main"
+      className="bg-background min-h-screen flex flex-col antialiased text-text-main overflow-x-hidden"
       style={{
         '--page-primary-color': colors.primary,
         '--page-primary-dark-color': colors.dark,

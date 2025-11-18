@@ -18,7 +18,7 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({ message, onNaviga
             <img 
                 src="https://cdn.discordapp.com/attachments/1435059807135596566/1440459315197644850/dise_o_de_la_cara_de_un_bot-removebg-preview.png?ex=691e3bc7&is=691cea47&hm=070eaa8d7916b08123839b2ece378c93ee01a1fec9628d31f7223fa2424dcc19&" 
                 alt="Ecobot" 
-                className="w-full h-full object-cover p-1" 
+                className="w-full h-full object-cover p-0.5" 
             />
         </div>
     );

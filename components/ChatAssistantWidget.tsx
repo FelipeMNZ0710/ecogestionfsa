@@ -148,26 +148,26 @@ const ChatAssistantWidget: React.FC<ChatAssistantWidgetProps> = ({ user, setCurr
             <div className={`fixed bottom-5 right-5 z-[1000] transition-all duration-300 ${isOpen ? 'opacity-0 scale-90 pointer-events-none' : 'opacity-100 scale-100'}`}>
                 <button
                     onClick={() => setIsOpen(true)}
-                    className="w-16 h-16 bg-primary rounded-full shadow-lg text-white flex items-center justify-center hover:bg-primary-dark hover:scale-110 transition-transform"
+                    className="w-16 h-16 bg-primary rounded-full shadow-lg text-white flex items-center justify-center hover:bg-primary-dark hover:scale-110 transition-transform overflow-hidden"
                     aria-label="Abrir chat de ayuda"
                 >
                     <img 
                         src="https://cdn.discordapp.com/attachments/1435059807135596566/1440459315197644850/dise_o_de_la_cara_de_un_bot-removebg-preview.png?ex=691e3bc7&is=691cea47&hm=070eaa8d7916b08123839b2ece378c93ee01a1fec9628d31f7223fa2424dcc19&" 
                         alt="Ecobot" 
-                        className="w-10 h-10 object-cover" 
+                        className="w-full h-full object-cover" 
                     />
                 </button>
             </div>
             {isOpen && (
-                <div className="fixed bottom-5 right-5 z-[1001] w-[calc(100vw-40px)] h-[calc(100vh-100px)] sm:w-96 sm:h-[600px] bg-surface rounded-2xl shadow-2xl flex flex-col overflow-hidden transition-all duration-300 animate-slide-in-up">
-                    <header className="p-4 border-b border-white/10 flex items-center justify-between flex-shrink-0">
+                <div className="fixed bottom-5 right-5 z-[1001] w-[calc(100vw-40px)] h-[calc(100dvh-100px)] sm:w-96 sm:h-[600px] bg-surface rounded-2xl shadow-2xl flex flex-col overflow-hidden transition-all duration-300 animate-slide-in-up border border-white/10">
+                    <header className="p-4 border-b border-white/10 flex items-center justify-between flex-shrink-0 bg-surface/95 backdrop-blur">
                         <div className="flex items-center gap-3">
                             <div className="relative">
                                 <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center overflow-hidden">
                                      <img 
                                         src="https://cdn.discordapp.com/attachments/1435059807135596566/1440459315197644850/dise_o_de_la_cara_de_un_bot-removebg-preview.png?ex=691e3bc7&is=691cea47&hm=070eaa8d7916b08123839b2ece378c93ee01a1fec9628d31f7223fa2424dcc19&" 
                                         alt="Ecobot" 
-                                        className="w-full h-full object-cover p-1" 
+                                        className="w-full h-full object-cover p-0.5" 
                                     />
                                 </div>
                                 <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 rounded-full border-2 border-surface"></div>
