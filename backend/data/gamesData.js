@@ -1,3 +1,5 @@
+
+
 const gamesData = [
     // Existing Games
     {
@@ -138,7 +140,19 @@ const gamesData = [
         },
         rating: 4.5
     },
-    // New Games
+    {
+        id: 21, // New ID for the requested game
+        title: 'Clasificador Maestro',
+        category: 'Estrategia',
+        image: 'https://images.unsplash.com/photo-1532996122724-e3c354a0b15b?q=80&w=400',
+        type: 'clasificador',
+        learningObjective: 'Arrastra cada residuo a su contenedor específico. ¡Aprende sobre residuos peligrosos y especiales!',
+        payload: {
+            points: 100
+        },
+        rating: 4.9
+    },
+    // New Games Placeholders
     {
         id: 8,
         title: 'Eco-Quiz Rápido',

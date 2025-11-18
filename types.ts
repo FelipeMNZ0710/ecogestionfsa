@@ -1,3 +1,4 @@
+
 export type Page =
   | 'home'
   | 'como-reciclar'
@@ -211,7 +212,7 @@ export interface Report {
 
 // --- Game Types ---
 export type GameType = 
-  | 'trivia' | 'memory' | 'sorting' | 'hangman' | 'chain' | 'catcher' | 'repair'
+  | 'trivia' | 'memory' | 'sorting' | 'hangman' | 'chain' | 'catcher' | 'repair' | 'clasificador'
   | 'eco-quiz' | 'find-the-intruder' | 'recycling-path' | 'river-cleaner' | 'compost-sequence'
   | 'myth-busters' | 'concept-connector' | 'water-saver' | 'eco-wordle' | 'sustainable-builder'
   | 'energy-impact' | 'nature-sounds' | 'spot-the-difference';
@@ -353,4 +354,15 @@ export interface Reward {
   stock?: number; // Optional: for limited rewards
   fileName?: string;
   fileData?: string; // base64 encoded
+  couponDurationValue?: number;
+  couponDurationUnit?: 'horas' | 'días';
+}
+
+export interface RedeemedReward {
+    id: number;
+    rewardTitle: string;
+    rewardImage: string;
+    code: string;
+    status: 'active' | 'used' | 'expired';
+    expiresAt: string; // ISO Date string
 }

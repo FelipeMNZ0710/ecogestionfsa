@@ -5,6 +5,10 @@ const db = require('./db');
 const comoReciclarData = require('./data/comoReciclarData');
 const { processAction } = require('./services/gamificationService');
 const gamesData = require('./data/gamesData');
+const locationsData = require('./data/locationsData');
+const newsData = require('./data/newsData');
+const rewardsData = require('./data/rewardsData');
+const { initialMessages, initialChannels } = require('./data/communityData');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
@@ -18,44 +22,26 @@ app.use(express.json({ limit: '50mb' }));
 
 // Middleware to update user's last active time
 const updateUserActivity = async (req, res, next) => {
-    // A simple way to get userId from various requests
     const userId = req.body.userId || req.query.userId || (req.user ? req.user.id : null) || (req.params.userId);
-    if (userId) {
+    if (userId && !isNaN(userId)) { // Ensure userId is valid
         try {
             await db.query('UPDATE users SET last_active = NOW() WHERE id = ?', [userId]);
         } catch (error) {
-            console.warn(`[Activity] Could not update last_active for user ${userId}:`, error.message);
+            // Silent fail for activity update
         }
     }
     next();
 };
 app.use(updateUserActivity);
 
-
-// --- Nodemailer Transporter Setup ---
-let transporter;
-if (process.env.EMAIL_SERVICE && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-    transporter = nodemailer.createTransport({
-        service: process.env.EMAIL_SERVICE,
-        auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS,
-        },
-    });
-    console.log(`✅ Nodemailer configurado para el servicio: ${process.env.EMAIL_SERVICE}`);
-} else {
-    console.warn('⚠️  ADVERTENCIA: Faltan las variables de entorno para el email (EMAIL_SERVICE, EMAIL_USER, EMAIL_PASS). Los emails no se enviarán, solo se simularán en la consola.');
-    transporter = null;
-}
-
 // --- Database Initialization Logic ---
 const initializeDatabase = async () => {
     let connection;
     try {
         connection = await db.getConnection();
-        console.log('✅ Conexión a la base de datos MySQL exitosa.');
+        console.log('✅ Inicializando/Verificando tablas de la base de datos...');
         
-        // --- Users Table (MySQL Syntax with ENUM) ---
+        // --- Users Table ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS users (
               id INT AUTO_INCREMENT PRIMARY KEY,
@@ -77,42 +63,20 @@ const initializeDatabase = async () => {
               socials TEXT DEFAULT NULL
             );
         `);
-        console.log('✅ Tabla "users" asegurada.');
 
-        const usersToInsert = [
-            { id: 1, name: 'Laura Fernández', email: 'laura@ecogestion.com', role: 'moderador' },
-            { id: 2, name: 'Carlos Giménez', email: 'carlos@ecogestion.com', role: 'usuario' },
-            { id: 3, name: 'María Rodriguez', email: 'maria@ecogestion.com', role: 'usuario' },
-            { id: 4, name: 'Javier Sosa', email: 'javier@ecogestion.com', role: 'usuario' },
-            { id: 5, name: 'Admin Dueño', email: 'admin@ecogestion.com', role: 'dueño' },
-        ];
-        console.log('⏳ Verificando/poblando usuarios iniciales...');
-        const passwordHash = await bcrypt.hash('password123', saltRounds);
-        const defaultStats = JSON.stringify({ messagesSent: 0, pointsVisited: 0, reportsMade: 0, dailyLogins: 0, completedQuizzes: [], quizzesCompleted: 0, gamesPlayed: 0, objectsIdentified: 0 });
-
-        for (const user of usersToInsert) {
-            await connection.query(
-                'INSERT IGNORE INTO users (id, name, email, password_hash, role, stats) VALUES (?, ?, ?, ?, ?, ?)',
-                [user.id, user.name, user.email, passwordHash, user.role, defaultStats]
+        // --- Admin Default ---
+        const [adminExists] = await connection.query('SELECT id FROM users WHERE role = "dueño" LIMIT 1');
+        if (adminExists.length === 0) {
+             const passwordHash = await bcrypt.hash('admin123', saltRounds);
+             const defaultStats = JSON.stringify({ messagesSent: 0, pointsVisited: 0, reportsMade: 0, dailyLogins: 0, completedQuizzes: [], quizzesCompleted: 0, gamesPlayed: 0, objectsIdentified: 0 });
+             await connection.query(
+                'INSERT INTO users (name, email, password_hash, role, stats, points) VALUES (?, ?, ?, ?, ?, ?)',
+                ['Super Admin', 'admin@ecogestion.com', passwordHash, 'dueño', defaultStats, 10000]
             );
+            console.log('✅ Usuario Admin creado: admin@ecogestion.com / admin123');
         }
-        console.log(`✅ ¡${usersToInsert.length} usuarios iniciales verificados/insertados! (pass: password123)`);
 
-        const felipeId = 6;
-        const felipeEmail = 'felipemonzon0710@gmail.com';
-        const felipeName = 'Felipe Monzón';
-        const felipePassword = '7c3f1d85vec';
-        const felipeRole = 'dueño';
-        const felipePasswordHash = await bcrypt.hash(felipePassword, saltRounds);
-        
-        await connection.query(
-            `INSERT INTO users (id, name, email, password_hash, role, stats) VALUES (?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE name = VALUES(name), password_hash = VALUES(password_hash), role = VALUES(role)`,
-            [felipeId, felipeName, felipeEmail, felipePasswordHash, felipeRole, defaultStats]
-        );
-        console.log(`✅ Usuario dueño '${felipeName}' asegurado con ID ${felipeId}.`);
-
-        // --- Locations Table (MySQL Syntax with ENUM) ---
+        // --- Locations Table ---
         await connection.query(`
              CREATE TABLE IF NOT EXISTS locations (
               id VARCHAR(255) PRIMARY KEY,
@@ -126,12 +90,24 @@ const initializeDatabase = async () => {
               status ENUM('ok', 'reported', 'maintenance', 'serviced') NOT NULL DEFAULT 'ok',
               last_serviced DATE,
               check_ins INT DEFAULT 0,
-              image_urls JSON
+              image_urls JSON,
+              reportCount INT DEFAULT 0,
+              latestReportReason VARCHAR(255) DEFAULT NULL
             );
         `);
-        console.log('✅ Tabla "locations" asegurada.');
-        
-        // --- Impact Stats Table (MySQL Syntax) ---
+
+        const [locCount] = await connection.query('SELECT COUNT(*) as count FROM locations');
+        if (locCount[0].count === 0) {
+            console.log('⏳ Insertando Puntos Verdes iniciales...');
+            for (const loc of locationsData) {
+                await connection.query(
+                    'INSERT INTO locations (id, name, address, description, hours, schedule, materials, map_data, status, check_ins, image_urls) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [loc.id, loc.name, loc.address, loc.description, loc.hours, loc.schedule, loc.materials, loc.map_data, loc.status, loc.check_ins, loc.image_urls]
+                );
+            }
+        }
+
+        // --- Impact Stats ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS impact_stats (
               id INT AUTO_INCREMENT PRIMARY KEY,
@@ -140,32 +116,38 @@ const initializeDatabase = async () => {
               points INT NOT NULL DEFAULT 0
             );
         `);
-        console.log('✅ Tabla "impact_stats" asegurada.');
         const [statsRows] = await connection.query('SELECT * FROM impact_stats WHERE id = 1');
         if (statsRows.length === 0) {
             await connection.query(`INSERT INTO impact_stats (id, recycled_kg, participants, points) VALUES (1, 14800, 5350, 48);`);
-            console.log('✅ Datos iniciales de estadísticas insertados.');
-        } else {
-            console.log('✅ Fila de estadísticas verificada.');
         }
 
-        // --- News Articles Table (MySQL Syntax) ---
+        // --- News Articles ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS news_articles (
               id INT AUTO_INCREMENT PRIMARY KEY,
               title VARCHAR(255) NOT NULL,
               category VARCHAR(100) NOT NULL,
               excerpt TEXT NOT NULL,
-              image TEXT DEFAULT NULL,
-              content TEXT DEFAULT NULL,
+              image LONGTEXT DEFAULT NULL,
+              content JSON DEFAULT NULL,
               featured BOOLEAN DEFAULT FALSE,
               author_id INT DEFAULT NULL,
               published_at TIMESTAMP NOT NULL DEFAULT current_timestamp
             );
         `);
-        console.log('✅ Tabla "news_articles" asegurada.');
-        
-        // --- Games Table (MySQL Syntax) ---
+
+        const [newsCount] = await connection.query('SELECT COUNT(*) as count FROM news_articles');
+        if (newsCount[0].count === 0) {
+            console.log('⏳ Insertando Noticias iniciales...');
+            for (const news of newsData) {
+                await connection.query(
+                    'INSERT INTO news_articles (title, category, excerpt, image, content, featured) VALUES (?, ?, ?, ?, ?, ?)',
+                    [news.title, news.category, news.excerpt, news.image, news.content, news.featured]
+                );
+            }
+        }
+
+        // --- Games Table ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS games (
               id INT AUTO_INCREMENT PRIMARY KEY,
@@ -179,37 +161,58 @@ const initializeDatabase = async () => {
               ratings_count INT DEFAULT 0
             );
         `);
-        console.log('✅ Tabla "games" asegurada.');
         
         const [gameRows] = await connection.query('SELECT COUNT(*) as count FROM games');
         if (gameRows[0].count < gamesData.length) {
-            console.log('⏳ La tabla "games" está incompleta o vacía. Poblando/completando con datos iniciales...');
+            console.log('⏳ Actualizando catálogo de juegos...');
             for (const g of gamesData) {
                 await connection.query(
-                    'INSERT IGNORE INTO games (id, title, category, image, type, learningObjective, payload, rating) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                    'INSERT INTO games (id, title, category, image, type, learningObjective, payload, rating) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE title=VALUES(title)',
                     [g.id, g.title, g.category, g.image, g.type, g.learningObjective, JSON.stringify(g.payload), g.rating]
                 );
             }
-            console.log(`✅ ¡${gamesData.length} juegos insertados/verificados en la base de datos!`);
-        } else {
-            console.log('✅ Tabla "games" verificada y completa.');
         }
 
-        // --- User Game Scores Table (MySQL Syntax with Index) ---
+        // --- Rewards Table ---
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS rewards (
+              id VARCHAR(255) PRIMARY KEY,
+              title VARCHAR(255) NOT NULL,
+              description TEXT NOT NULL,
+              cost INT NOT NULL,
+              category ENUM('Descuentos', 'Digital', 'Donaciones', 'Productos') NOT NULL,
+              image LONGTEXT,
+              stock INT DEFAULT NULL,
+              file_name VARCHAR(255) DEFAULT NULL,
+              file_data LONGTEXT DEFAULT NULL,
+              coupon_duration_value INT DEFAULT 24,
+              coupon_duration_unit ENUM('horas', 'días') DEFAULT 'horas'
+            );
+        `);
+        
+        const [rewardCount] = await connection.query('SELECT COUNT(*) as count FROM rewards');
+        if (rewardCount[0].count === 0) {
+            console.log('⏳ Insertando Recompensas iniciales...');
+            for (const r of rewardsData) {
+                 await connection.query(
+                    'INSERT INTO rewards (id, title, description, cost, category, image, stock) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    [r.id, r.title, r.description, r.cost, r.category, r.image, r.stock]
+                );
+            }
+        }
+
+        // --- Other Tables ---
         await connection.query(`
              CREATE TABLE IF NOT EXISTS user_game_scores (
               user_id INT NOT NULL,
               game_id INT NOT NULL,
               high_score INT NOT NULL DEFAULT 0,
               PRIMARY KEY (user_id, game_id),
-              INDEX idx_user_game_scores_game_id (game_id),
-              CONSTRAINT user_game_scores_user_id_fkey FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
-              CONSTRAINT user_game_scores_game_id_fkey FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
+              FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+              FOREIGN KEY (game_id) REFERENCES games (id) ON DELETE CASCADE
             );
         `);
-        console.log('✅ Tabla "user_game_scores" asegurada.');
 
-        // --- Reports Table (MySQL Syntax with ENUM and Indexes) ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS reports (
               id INT AUTO_INCREMENT PRIMARY KEY,
@@ -217,16 +220,12 @@ const initializeDatabase = async () => {
               user_id INT NOT NULL,
               reason ENUM('full', 'dirty', 'damaged', 'other') NOT NULL,
               comment TEXT,
-              image_url MEDIUMTEXT,
+              image_url LONGTEXT,
               status ENUM('pending', 'resolved', 'dismissed') NOT NULL DEFAULT 'pending',
-              reported_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              INDEX idx_reports_location_id (location_id),
-              INDEX idx_reports_user_id (user_id)
+              reported_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
         `);
-        console.log('✅ Tabla "reports" asegurada.');
 
-        // --- Contact Messages Table (MySQL Syntax with ENUM) ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS contact_messages (
               id INT AUTO_INCREMENT PRIMARY KEY,
@@ -238,9 +237,7 @@ const initializeDatabase = async () => {
               submitted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
         `);
-        console.log('✅ Tabla "contact_messages" asegurada.');
-
-        // --- Community Channels Table (MySQL Syntax) ---
+        
         await connection.query(`
             CREATE TABLE IF NOT EXISTS community_channels (
               id INT AUTO_INCREMENT PRIMARY KEY,
@@ -249,1619 +246,822 @@ const initializeDatabase = async () => {
               admin_only_write BOOLEAN DEFAULT FALSE
             );
         `);
-        console.log('✅ Tabla "community_channels" asegurada.');
-        
-        const initialChannels = [
-            { id: 1, name: 'general', description: 'Charlas generales', admin_only_write: false },
-            { id: 2, name: 'dudas', description: 'Preguntas sobre reciclaje', admin_only_write: false },
-            { id: 3, name: 'anuncios', description: 'Anuncios importantes', admin_only_write: true },
-        ];
-        console.log('⏳ Verificando/poblando canales iniciales...');
+
+        // Ensure initial channels exist
         for (const channel of initialChannels) {
             await connection.query(
                 'INSERT IGNORE INTO community_channels (id, name, description, admin_only_write) VALUES (?, ?, ?, ?)',
                 [channel.id, channel.name, channel.description, channel.admin_only_write]
             );
         }
-        console.log('✅ Canales iniciales verificados/insertados.');
 
-        // --- Community Messages Table (MySQL Syntax with Indexes) ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS community_messages (
               id INT AUTO_INCREMENT PRIMARY KEY,
               channel_id INT NOT NULL,
               user_id INT NOT NULL,
               content TEXT NOT NULL,
-              image_url MEDIUMTEXT DEFAULT NULL,
+              image_url LONGTEXT DEFAULT NULL,
               created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
               edited BOOLEAN DEFAULT FALSE,
               reactions JSON,
               replying_to_message_id INT DEFAULT NULL,
-              INDEX idx_community_messages_channel_id (channel_id),
-              INDEX idx_community_messages_user_id (user_id),
               FOREIGN KEY (channel_id) REFERENCES community_channels(id) ON DELETE CASCADE
             );
         `);
-        console.log('✅ Tabla "community_messages" asegurada.');
 
-        const { initialMessages } = require('./data/communityData');
-        const [msgCountRows] = await connection.query('SELECT COUNT(*) as count FROM community_messages');
-        const totalInitialMessages = Object.values(initialMessages).reduce((sum, channelMsgs) => sum + channelMsgs.length, 0);
-
-        if (msgCountRows[0].count < totalInitialMessages) {
-            console.log('⏳ La tabla "community_messages" está incompleta o vacía. Poblando/completando...');
-            for (const channelId in initialMessages) {
-                for (const msg of initialMessages[channelId]) {
-                    await connection.query(
-                        'INSERT IGNORE INTO community_messages (id, channel_id, user_id, content, created_at, edited, reactions, replying_to_message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                        [msg.id, channelId, msg.user_id, msg.content, msg.created_at, msg.edited || false, JSON.stringify(msg.reactions || {}), msg.replying_to_message_id || null]
-                    );
-                }
-            }
-            console.log('✅ Mensajes iniciales de la comunidad verificados/insertados.');
-        } else {
-            console.log('✅ Tabla "community_messages" verificada.');
+        // Seed initial messages if empty
+        const [msgCount] = await connection.query('SELECT COUNT(*) as count FROM community_messages');
+        if (msgCount[0].count === 0) {
+            // ... Seeding logic would go here, but requires valid user IDs. Skipping for now.
         }
 
-        const mentionMessageId = 105;
-        const [mentionMessageExists] = await connection.query('SELECT id FROM community_messages WHERE id = ?', [mentionMessageId]);
-        if (mentionMessageExists.length === 0) {
-            const lauraUserId = 1;
-            const generalChannelId = 1;
-            await connection.query(
-                'INSERT INTO community_messages (id, channel_id, user_id, content, created_at) VALUES (?, ?, ?, ?, ?)',
-                [mentionMessageId, generalChannelId, lauraUserId, `Hola @${felipeName}, ¿podrías revisar las nuevas estadísticas de la página de inicio?`, new Date(Date.now() - 1000 * 60 * 5)]
-            );
-            console.log(`✅ Mensaje de mención de prueba (ID ${mentionMessageId}) creado.`);
-        }
-
-        // --- Notifications Table (MySQL Syntax with ENUM and Indexes) ---
+        // --- NOTIFICATIONS TABLE AND FIX ---
         await connection.query(`
             CREATE TABLE IF NOT EXISTS notifications (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id INT NOT NULL,
-                type ENUM('achievement', 'mention', 'reply') NOT NULL,
-                achievement_id VARCHAR(255),
-                related_user_id INT,
-                community_message_id INT,
-                channel_id INT,
-                is_read BOOLEAN NOT NULL DEFAULT FALSE,
+                type ENUM('mention', 'reply', 'achievement', 'points') NOT NULL,
+                data JSON NOT NULL,
+                is_read BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+        `);
+
+        // 🛠️ AUTO-FIX: Detect and Add 'data' column if missing
+        try {
+            const [columns] = await connection.query("SHOW COLUMNS FROM notifications LIKE 'data'");
+            if (columns.length === 0) {
+                console.log("⚠️ Detectada tabla 'notifications' antigua. Agregando columna 'data'...");
+                await connection.query("ALTER TABLE notifications ADD COLUMN data JSON NOT NULL");
+                console.log("✅ Columna 'data' agregada exitosamente.");
+            }
+        } catch (migErr) {
+            console.error("⚠️ Error verificando/migrando tabla notifications:", migErr.message);
+        }
+
+         await connection.query(`
+            CREATE TABLE IF NOT EXISTS user_redeemed_rewards (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                reward_id VARCHAR(255) NOT NULL,
+                code VARCHAR(255) NOT NULL UNIQUE,
+                status ENUM('active','used','expired') NOT NULL DEFAULT 'active',
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at DATETIME NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-                FOREIGN KEY (related_user_id) REFERENCES users(id) ON DELETE SET NULL,
-                FOREIGN KEY (community_message_id) REFERENCES community_messages(id) ON DELETE CASCADE,
-                FOREIGN KEY (channel_id) REFERENCES community_channels(id) ON DELETE CASCADE
+                FOREIGN KEY (reward_id) REFERENCES rewards(id) ON DELETE CASCADE
             );
         `);
-        console.log('✅ Tabla "notifications" asegurada.');
-
-        const [notifCheck] = await connection.query('SELECT id FROM notifications WHERE community_message_id = ? AND user_id = ?', [mentionMessageId, felipeId]);
-        if (notifCheck.length === 0) {
-            const lauraUserId = 1;
-            const generalChannelId = 1;
-            await connection.query(
-                'INSERT INTO notifications (user_id, type, related_user_id, community_message_id, channel_id) VALUES (?, ?, ?, ?, ?)',
-                [felipeId, 'mention', lauraUserId, mentionMessageId, generalChannelId]
-            );
-            console.log(`✅ Notificación de prueba para Felipe Monzón creada.`);
-        } else {
-            console.log('✅ Notificación de prueba para Felipe ya existe.');
-        }
-
-
-        // --- Rewards Table ---
-        await connection.query(`
-            CREATE TABLE IF NOT EXISTS rewards (
-              id VARCHAR(255) PRIMARY KEY,
-              title VARCHAR(255) NOT NULL,
-              description TEXT NOT NULL,
-              cost INT NOT NULL,
-              category ENUM('Descuentos','Digital','Donaciones','Productos') NOT NULL,
-              image MEDIUMTEXT NOT NULL,
-              stock INT DEFAULT NULL,
-              file_name VARCHAR(255) DEFAULT NULL,
-              file_data MEDIUMTEXT DEFAULT NULL
-            );
-        `);
-        console.log('✅ Tabla "rewards" asegurada.');
         
-        const rewardsData = require('./data/rewardsData');
-        const [rewardCountRows] = await connection.query('SELECT COUNT(*) as count FROM rewards');
-        if (rewardCountRows[0].count < rewardsData.length) {
-            console.log('⏳ La tabla "rewards" está incompleta o vacía. Poblando/completando con datos iniciales...');
-            for (const reward of rewardsData) {
-                await connection.query(
-                    'INSERT IGNORE INTO rewards (id, title, description, cost, category, image, stock) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                    [reward.id, reward.title, reward.description, reward.cost, reward.category, reward.image, reward.stock]
-                );
-            }
-            console.log(`✅ ¡${rewardsData.length} recompensas verificadas/insertadas en la base de datos!`);
-        } else {
-             console.log('✅ Tabla "rewards" verificada y completa.');
-        }
-
-
-    } catch (error) {
-        console.error('❌ ERROR CRÍTICO durante la inicialización de la base de datos:', error);
-        throw error;
+    } catch (err) {
+        console.error('❌ ERROR CRÍTICO DB:', err);
     } finally {
-        if (connection) {
-            connection.release();
-        }
+        if (connection) connection.release();
     }
 };
 
-// --- Helper Functions ---
-const formatUserForFrontend = (dbUser) => {
-    try {
-        if (!dbUser || typeof dbUser !== 'object') return null;
+const startServer = async () => {
+    await initializeDatabase();
+    app.listen(port, () => {
+        console.log(`🚀 Servidor corriendo en http://localhost:${port}`);
+    });
+};
 
-        const { allAchievements } = require('./data/achievementsData');
-        
-        let unlockedIds = new Set();
-        try {
-            if (typeof dbUser.unlocked_achievements === 'string' && dbUser.unlocked_achievements.trim().startsWith('[')) {
-                const parsedAchievements = JSON.parse(dbUser.unlocked_achievements);
-                if (Array.isArray(parsedAchievements)) {
-                    unlockedIds = new Set(parsedAchievements.map(String));
-                }
-            }
-        } catch (e) {
-            console.warn(`[formatUser] Could not parse 'unlocked_achievements' for user ${dbUser.id}. Using default. Data:`, dbUser.unlocked_achievements);
-        }
+startServer();
 
-        const userAchievements = allAchievements.map(ach => ({
-            ...ach,
-            unlocked: unlockedIds.has(ach.id)
-        }));
+// --- HELPER FUNCTIONS ---
+const getUserById = async (userId) => {
+    if (!userId) return null;
+    const [userRows] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
+    if (userRows.length === 0) return null;
+    const user = userRows[0];
+    
+    // Parsing JSON safely
+    const parse = (str, def) => {
+        try { return str ? JSON.parse(str) : def; } catch { return def; }
+    };
+    
+    // Unlock achievements
+    const allAchievements = require('./data/achievementsData').allAchievements;
+    const unlockedIds = new Set(parse(user.unlocked_achievements, []));
+    const userAchievements = allAchievements.map(ach => ({...ach, unlocked: unlockedIds.has(ach.id)}));
 
-        const defaultStats = { messagesSent: 0, pointsVisited: 0, reportsMade: 0, dailyLogins: 0, completedQuizzes: [], quizzesCompleted: 0, gamesPlayed: 0, objectsIdentified: 0 };
-        let finalStats = { ...defaultStats };
-        try {
-            let parsedStats = {};
-            if (typeof dbUser.stats === 'string' && dbUser.stats.trim().startsWith('{')) {
-                parsedStats = JSON.parse(dbUser.stats);
-            } else if (typeof dbUser.stats === 'object' && dbUser.stats !== null) {
-                parsedStats = dbUser.stats;
-            }
-             if (typeof parsedStats === 'object' && parsedStats !== null) {
-                finalStats = { ...defaultStats, ...parsedStats };
-            }
-        } catch (e) {
-             console.warn(`[formatUser] Could not parse 'stats' for user ${dbUser.id}. Using default. Data:`, dbUser.stats);
-        }
+    // Stats defaults
+    const defaultStats = { messagesSent: 0, pointsVisited: 0, reportsMade: 0, dailyLogins: 0, completedQuizzes: [], quizzesCompleted: 0, gamesPlayed: 0, objectsIdentified: 0 };
+    const parsedStats = parse(user.stats, {});
+    const mergedStats = { ...defaultStats, ...parsedStats };
 
-        let safeLastLogin = null;
-        if (dbUser.last_login) {
-            const date = new Date(dbUser.last_login);
-            if (!isNaN(date.getTime())) {
-                safeLastLogin = date.toISOString().split('T')[0];
-            }
-        }
-
-        const safeParseJsonArray = (field) => {
-            try {
-                if (typeof field === 'string' && field.trim().startsWith('[')) {
-                    const parsed = JSON.parse(field);
-                    if (Array.isArray(parsed)) return parsed;
-                }
-            } catch (e) {}
-            return [];
-        };
-        const safeParseJsonObject = (field) => {
-             try {
-                if (typeof field === 'string' && field.trim().startsWith('{')) {
-                    const parsed = JSON.parse(field);
-                    if (typeof parsed === 'object' && parsed !== null) return parsed;
-                }
-            } catch (e) {}
-            return {};
-        };
-
-        return {
-            id: String(dbUser.id),
-            name: dbUser.name || '',
-            email: dbUser.email || '',
-            points: Number(dbUser.points) || 0,
-            kgRecycled: parseFloat(dbUser.kg_recycled) || 0.00,
-            role: dbUser.role || 'usuario',
-            achievements: userAchievements,
-            stats: finalStats,
-            lastLogin: safeLastLogin,
-            favoriteLocations: safeParseJsonArray(dbUser.favorite_locations),
-            bannerUrl: dbUser.banner_url || null,
-            profilePictureUrl: dbUser.profile_picture_url || null,
-            title: dbUser.title || null,
-            bio: dbUser.bio || null,
-            socials: safeParseJsonObject(dbUser.socials),
-        };
-    } catch (error) {
-        console.error(`[CRITICAL] formatUserForFrontend failed unexpectedly for user id ${dbUser?.id}.`, error);
-        return null; 
-    }
+    // Mapeo explícito de snake_case (DB) a camelCase (Frontend)
+    return {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        points: user.points,
+        kgRecycled: user.kg_recycled || 0,
+        role: user.role,
+        achievements: userAchievements,
+        stats: mergedStats,
+        profilePictureUrl: user.profile_picture_url,
+        bannerUrl: user.banner_url,
+        title: user.title,
+        bio: user.bio,
+        favoriteLocations: parse(user.favorite_locations, []),
+        socials: parse(user.socials, {}),
+        lastLogin: user.last_login ? new Date(user.last_login).toISOString().split('T')[0] : null,
+    };
 };
 
 
-// --- API ROUTES ---
+// --- ENDPOINTS ---
 
-// --- Auth ---
+// Auth
 app.post('/api/register', async (req, res) => {
-    console.log('\n[REGISTER] Petición recibida para registrar nuevo usuario.');
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) return res.status(400).json({ message: 'Datos incompletos' });
     try {
-        const { name, email, password } = req.body;
-        console.log(`[REGISTER] Datos recibidos: email=${email}, name=${name}`);
-        if (!name || !email || !password) {
-            console.log('[REGISTER] Error: Faltan campos requeridos.');
-            return res.status(400).json({ message: 'Nombre, email y contraseña son requeridos.' });
-        }
-
-        console.log('[REGISTER] Verificando si el email ya existe en la DB...');
-        const [existingUsers] = await db.query('SELECT id FROM users WHERE email = ?', [email]);
-        if (existingUsers.length > 0) {
-            console.log(`[REGISTER] Error: El email ${email} ya está registrado.`);
-            return res.status(409).json({ message: 'El email ya está registrado.' });
-        }
-        console.log('[REGISTER] Email disponible. Procediendo con el registro.');
-
-        console.log('[REGISTER] Hasheando contraseña...');
-        const password_hash = await bcrypt.hash(password, saltRounds);
-        const last_login = new Date();
-        const defaultStats = JSON.stringify({ messagesSent: 0, pointsVisited: 0, reportsMade: 0, dailyLogins: 1, completedQuizzes: [], quizzesCompleted: 0, gamesPlayed: 0, objectsIdentified: 0 });
-        console.log('[REGISTER] Contraseña hasheada. Preparando para insertar en la DB...');
-
-        const [result] = await db.query(
-            'INSERT INTO users (name, email, password_hash, last_login, role, points, kg_recycled, stats) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [name, email, password_hash, last_login, 'usuario', 0, 0, defaultStats]
-        );
-        const newUserId = result.insertId;
-        console.log(`[REGISTER] ¡ÉXITO! Usuario insertado en la DB con ID: ${newUserId}.`);
-
-        console.log('[REGISTER] Obteniendo datos del nuevo usuario para devolver al frontend...');
-        const [newUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [newUserId]);
-        console.log('[REGISTER] Usuario obtenido. Enviando respuesta 201 al frontend.');
-        res.status(201).json(formatUserForFrontend(newUserRows[0]));
-
-    } catch (error) {
-        console.error('----------------------------------------------------');
-        console.error('>>> [REGISTER] ¡ERROR CRÍTICO DURANTE EL REGISTRO! <<<');
-        console.error('----------------------------------------------------');
-        console.error('Este es el error que impide guardar el usuario en la base de datos:');
-        console.error(error);
-        console.error('----------------------------------------------------');
-        res.status(500).json({ message: 'Error en el servidor. Revisa la consola del backend para más detalles.' });
-    }
+        const [exists] = await db.query('SELECT id FROM users WHERE email = ?', [email]);
+        if (exists.length > 0) return res.status(409).json({ message: 'Email ya registrado' });
+        
+        const hash = await bcrypt.hash(password, saltRounds);
+        const defaultStats = JSON.stringify({ messagesSent: 0, pointsVisited: 0, reportsMade: 0, dailyLogins: 0, completedQuizzes: [], quizzesCompleted: 0, gamesPlayed: 0, objectsIdentified: 0 });
+        
+        const [result] = await db.query('INSERT INTO users (name, email, password_hash, stats) VALUES (?, ?, ?, ?)', [name, email, hash, defaultStats]);
+        const newUser = await getUserById(result.insertId);
+        res.status(201).json(newUser);
+    } catch (e) { res.status(500).json({ message: 'Error del servidor' }); }
 });
 
 app.post('/api/login', async (req, res) => {
-    console.log(`\n[LOGIN] Petición de inicio de sesión para ${req.body.email}.`);
+    const { email, password } = req.body;
     try {
-        const { email, password } = req.body;
-        if (!email || !password) return res.status(400).json({ message: 'Email y contraseña son requeridos.' });
+        const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+        if (rows.length === 0) return res.status(401).json({ message: 'Credenciales inválidas' });
+        const user = rows[0];
+        const match = await bcrypt.compare(password, user.password_hash);
+        if (!match) return res.status(401).json({ message: 'Credenciales inválidas' });
         
-        const [users] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
-        if (users.length === 0) {
-            console.log(`[LOGIN] Fallo: Email no encontrado.`);
-            return res.status(401).json({ message: 'Email o contraseña incorrectos.' });
-        }
-        
-        const dbUser = users[0];
-        const match = await bcrypt.compare(password, dbUser.password_hash);
-        if (!match) {
-            console.log(`[LOGIN] Fallo: Contraseña incorrecta para ${email}.`);
-            return res.status(401).json({ message: 'Email o contraseña incorrectos.' });
-        }
-        
-        console.log(`[LOGIN] Éxito: Usuario ${email} autenticado. Actualizando last_login...`);
-        await db.query('UPDATE users SET last_login = ? WHERE id = ?', [new Date(), dbUser.id]);
-        
-        const [refetchedUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [dbUser.id]);
-
-        res.status(200).json(formatUserForFrontend(refetchedUserRows[0]));
-    } catch (error) {
-        console.error('[LOGIN] ERROR:', error);
-        res.status(500).json({ message: 'Error en el servidor al iniciar sesión.' });
-    }
+        const fullUser = await getUserById(user.id);
+        res.json(fullUser);
+    } catch (e) { res.status(500).json({ message: 'Error del servidor' }); }
 });
 
-// --- User Profile, Favorites & Actions ---
+// Gamification
 app.post('/api/user-action', async (req, res) => {
+    const { userId, action, payload } = req.body;
     try {
-        const { userId, action, payload } = req.body;
+        const [rows] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
+        if (rows.length === 0) return res.status(404).json({ message: 'Usuario no encontrado' });
         
-        if (action === 'check_in' && payload?.locationId) {
-            await db.query('UPDATE locations SET check_ins = check_ins + 1 WHERE id = ?', [payload.locationId]);
+        const user = rows[0];
+        const { updatedUser, notifications } = processAction(user, action, payload);
+        
+        await db.query('UPDATE users SET points = ?, stats = ?, unlocked_achievements = ?, last_login = ? WHERE id = ?', 
+            [updatedUser.points, JSON.stringify(updatedUser.stats), JSON.stringify(updatedUser.unlocked_achievements), updatedUser.last_login, userId]);
+        
+        // High Score Logic
+        if (action === 'complete_game' && payload?.gameId && payload?.score) {
+            await db.query(`INSERT INTO user_game_scores (user_id, game_id, high_score) VALUES (?, ?, ?) 
+                            ON DUPLICATE KEY UPDATE high_score = GREATEST(high_score, VALUES(high_score))`, 
+                            [userId, payload.gameId, payload.score]);
         }
-        
-        if (action === 'complete_game' && payload?.gameId && payload?.score !== undefined) {
-             await db.query(
-                `INSERT INTO user_game_scores (user_id, game_id, high_score) 
-                 VALUES (?, ?, ?) 
-                 ON DUPLICATE KEY UPDATE high_score = GREATEST(high_score, VALUES(high_score))`,
-                [userId, payload.gameId, payload.score]
-            );
+
+        // Notifications
+        for (const n of notifications) {
+             if(n.type === 'achievement') {
+                const def = require('./data/achievementsData').allAchievements.find(a => a.id === n.achievementId);
+                if(def) await db.query('INSERT INTO notifications (user_id, type, data) VALUES (?, ?, ?)', [userId, 'achievement', JSON.stringify(def)]);
+             } else {
+                 await db.query('INSERT INTO notifications (user_id, type, data) VALUES (?, ?, ?)', [userId, 'points', JSON.stringify(n)]);
+             }
         }
 
-        const [userRows] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
-        if (userRows.length === 0) return res.status(404).json({ message: 'Usuario no encontrado.' });
-        
-        const dbUser = userRows[0];
-        const { updatedUser, notifications } = processAction(dbUser, action, payload);
-
-        await db.query(
-            'UPDATE users SET points = ?, last_login = ?, stats = ?, unlocked_achievements = ? WHERE id = ?',
-            [
-                updatedUser.points,
-                updatedUser.last_login,
-                JSON.stringify(updatedUser.stats),
-                JSON.stringify(updatedUser.unlocked_achievements),
-                userId
-            ]
-        );
-        
-        for (const notif of notifications) {
-            if (notif.type === 'achievement' && notif.achievementId) {
-                await db.query(
-                    'INSERT INTO notifications (user_id, type, achievement_id) VALUES (?, ?, ?)',
-                    [userId, 'achievement', notif.achievementId]
-                );
-            }
-        }
-        
-        const [refetchedUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
-
-        res.status(200).json({
-            updatedUser: formatUserForFrontend(refetchedUserRows[0]),
-            notifications
-        });
-
-    } catch (error) {
-        console.error('[USER ACTION] ERROR:', error);
-        res.status(500).json({ message: 'Error en el servidor al procesar la acción.' });
-    }
+        const finalUser = await getUserById(userId);
+        res.json({ updatedUser: finalUser, notifications });
+    } catch (e) { console.error(e); res.status(500).json({ message: 'Error en gamificación' }); }
 });
 
+// Data Endpoints
+app.get('/api/locations', async (req, res) => {
+    try {
+        const [rows] = await db.query('SELECT * FROM locations');
+        res.json(rows);
+    } catch (e) { res.status(500).json({ message: 'Error obteniendo puntos verdes' }); }
+});
+
+app.get('/api/news', async (req, res) => {
+    try {
+        const [rows] = await db.query('SELECT * FROM news_articles ORDER BY published_at DESC');
+        res.json(rows);
+    } catch (e) { res.status(500).json({ message: 'Error obteniendo noticias' }); }
+});
+
+app.get('/api/games', async (req, res) => {
+    const { userId } = req.query;
+    try {
+        const [games] = await db.query('SELECT * FROM games');
+        if (userId) {
+            const [scores] = await db.query('SELECT game_id, high_score FROM user_game_scores WHERE user_id = ?', [userId]);
+            const scoreMap = {};
+            scores.forEach(s => scoreMap[s.game_id] = s.high_score);
+            res.json(games.map(g => ({ ...g, userHighScore: scoreMap[g.id] || 0 })));
+        } else {
+            res.json(games.map(g => ({ ...g, userHighScore: 0 })));
+        }
+    } catch (e) { res.status(500).json({ message: 'Error juegos' }); }
+});
+
+app.get('/api/recycling-guides', (req, res) => res.json(comoReciclarData));
+app.get('/api/impact-stats', async (req, res) => {
+    const [rows] = await db.query('SELECT recycled_kg as recycledKg, participants, points FROM impact_stats WHERE id = 1');
+    res.json(rows[0] || { recycledKg: 0, participants: 0, points: 0 });
+});
+
+// --- PROFILE API ---
 app.get('/api/users/profile/:id', async (req, res) => {
     try {
-        const { id } = req.params;
-        const [users] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
-        if (users.length === 0) {
-            return res.status(404).json({ message: 'Usuario no encontrado.' });
-        }
-        
-        const formattedUser = formatUserForFrontend(users[0]);
-        if (!formattedUser) {
-            return res.status(500).json({ message: 'Error al procesar los datos del usuario.' });
-        }
-
-        res.status(200).json(formattedUser);
-    } catch (error) {
-        console.error('[GET USER PROFILE] ERROR:', error);
-        res.status(500).json({ message: 'Error en el servidor al obtener el perfil del usuario.' });
-    }
+        const user = await getUserById(req.params.id);
+        if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
+        res.json(user);
+    } catch (e) { res.status(500).json({ message: 'Error' }); }
 });
 
 app.put('/api/users/profile/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const fieldsToUpdate = req.body;
+    const { name, title, bio, bannerUrl, profilePictureUrl, points, kgRecycled, role } = req.body;
+    const updates = [];
+    const params = [];
+    
+    if (name !== undefined) { updates.push('name = ?'); params.push(name); }
+    if (title !== undefined) { updates.push('title = ?'); params.push(title); }
+    if (bio !== undefined) { updates.push('bio = ?'); params.push(bio); }
+    if (bannerUrl !== undefined) { updates.push('banner_url = ?'); params.push(bannerUrl); }
+    if (profilePictureUrl !== undefined) { updates.push('profile_picture_url = ?'); params.push(profilePictureUrl); }
+    if (points !== undefined) { updates.push('points = ?'); params.push(points); }
+    if (kgRecycled !== undefined) { updates.push('kg_recycled = ?'); params.push(kgRecycled); }
+    if (role !== undefined) { updates.push('role = ?'); params.push(role); }
 
-        if (Object.keys(fieldsToUpdate).length === 0) return res.status(400).json({ message: 'No se proporcionaron campos para actualizar.' });
-        
-        const columnMapping = {
-            name: 'name', points: 'points', kgRecycled: 'kg_recycled', title: 'title', bio: 'bio', bannerUrl: 'banner_url', profilePictureUrl: 'profile_picture_url',
-        };
+    if (updates.length === 0) return res.json(await getUserById(req.params.id));
 
-        const setClauses = [], values = [];
-        for (const key in fieldsToUpdate) {
-            if (columnMapping[key]) {
-                setClauses.push(`${columnMapping[key]} = ?`);
-                values.push(fieldsToUpdate[key]);
-            }
-        }
-        if (setClauses.length === 0) return res.status(400).json({ message: 'Ninguno de los campos proporcionados es válido.' });
-        
-        values.push(id);
-        const sql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = ?`;
-        await db.query(sql, values);
-
-        const [updatedUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
-        if (updatedUserRows.length === 0) return res.status(404).json({ message: 'Usuario no encontrado después de la actualización.' });
-        
-        res.status(200).json(formatUserForFrontend(updatedUserRows[0]));
-    } catch (error) {
-        console.error('[UPDATE PROFILE] ERROR:', error);
-        res.status(500).json({ message: 'Error en el servidor al actualizar el perfil.' });
-    }
+    params.push(req.params.id);
+    await db.query(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+    res.json(await getUserById(req.params.id));
 });
 
 app.put('/api/users/favorites', async (req, res) => {
-    try {
-        const { userId, locationId } = req.body;
-        
-        const [users] = await db.query('SELECT favorite_locations FROM users WHERE id = ?', [userId]);
-        if (users.length === 0) return res.status(404).json({ message: 'Usuario no encontrado.' });
-        
-        const safeParseJson = (jsonString, fallbackValue) => {
-            try {
-                if(typeof jsonString === 'string') return JSON.parse(jsonString);
-                return fallbackValue;
-            } catch {
-                return fallbackValue;
-            }
-        }
-        let favorites = safeParseJson(users[0].favorite_locations, []) || [];
-        const index = favorites.indexOf(locationId);
-        if (index > -1) favorites.splice(index, 1); else favorites.push(locationId);
-        
-        await db.query('UPDATE users SET favorite_locations = ? WHERE id = ?', [JSON.stringify(favorites), userId]);
-
-        const [updatedUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
-        res.status(200).json(formatUserForFrontend(updatedUserRows[0]));
-    } catch (error) {
-        console.error('[UPDATE FAVORITES] ERROR:', error);
-        res.status(500).json({ message: 'Error en el servidor al actualizar favoritos.' });
+    const { userId, locationId } = req.body;
+    const user = await getUserById(userId);
+    if(!user) return res.status(404).json({message: 'User not found'});
+    
+    // usar user.favoriteLocations (que ahora viene en camelCase desde getUserById)
+    let favorites = user.favoriteLocations || [];
+    if (favorites.includes(locationId)) {
+        favorites = favorites.filter(id => id !== locationId);
+    } else {
+        favorites.push(locationId);
     }
+    
+    await db.query('UPDATE users SET favorite_locations = ? WHERE id = ?', [JSON.stringify(favorites), userId]);
+    res.json(await getUserById(userId));
 });
 
-// --- Rewards ---
-app.get('/api/rewards', async (req, res) => {
-    try {
-        const [rewards] = await db.query('SELECT id, title, description, cost, category, image, stock FROM rewards ORDER BY cost ASC');
-        res.json(rewards);
-    } catch (error) {
-        console.error("[GET REWARDS] ERROR:", error);
-        res.status(500).json({ message: "Error al obtener las recompensas." });
-    }
+// --- NOTIFICATIONS ---
+app.get('/api/notifications/unread-count/:userId', async (req, res) => {
+    const [rows] = await db.query('SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = FALSE', [req.params.userId]);
+    res.json({ totalUnread: rows[0].count });
 });
 
-app.post('/api/redeem-reward', async (req, res) => {
-    try {
-        const { userId, rewardId } = req.body;
-        if (!userId || !rewardId) {
-            return res.status(400).json({ message: "Se requiere ID de usuario y de recompensa." });
-        }
+app.get('/api/notifications/:userId', async (req, res) => {
+    const [rows] = await db.query("SELECT id, type, data, is_read, created_at as time FROM notifications WHERE user_id = ? AND type IN ('mention', 'reply') ORDER BY created_at DESC", [req.params.userId]);
+     const notifications = rows.map(row => {
+        let data = {};
+        try { 
+            const parsed = typeof row.data === 'string' ? JSON.parse(row.data) : row.data; 
+            if (parsed) data = parsed;
+        } catch(e) {}
         
-        const [[reward]] = await db.query('SELECT * FROM rewards WHERE id = ?', [rewardId]);
-        if (!reward) {
-            return res.status(404).json({ message: "Recompensa no encontrada." });
-        }
-
-        const [userRows] = await db.query('SELECT points FROM users WHERE id = ?', [userId]);
-        if (userRows.length === 0) {
-            return res.status(404).json({ message: "Usuario no encontrado." });
-        }
-        
-        if (reward.stock !== null && reward.stock <= 0) {
-            return res.status(403).json({ message: "Esta recompensa está agotada." });
-        }
-
-        const userPoints = userRows[0].points;
-        if (userPoints < reward.cost) {
-            return res.status(403).json({ message: "No tienes suficientes EcoPuntos para canjear esta recompensa." });
-        }
-
-        const newPoints = userPoints - reward.cost;
-        await db.query('UPDATE users SET points = ? WHERE id = ?', [newPoints, userId]);
-
-        if (reward.stock !== null) {
-            await db.query('UPDATE rewards SET stock = stock - 1 WHERE id = ?', [rewardId]);
-        }
-        
-        console.log(`[REDEEM] Usuario ${userId} canjeó ${reward.title} por ${reward.cost} puntos. Saldo restante: ${newPoints}.`);
-
-        const [updatedUserRows] = await db.query('SELECT * FROM users WHERE id = ?', [userId]);
-        const formattedUser = formatUserForFrontend(updatedUserRows[0]);
-
-        if (reward.category === 'Digital') {
-            const [[rewardWithFile]] = await db.query('SELECT file_name, file_data FROM rewards WHERE id = ?', [rewardId]);
-            if (rewardWithFile && rewardWithFile.file_data) {
-                return res.status(200).json({
-                    updatedUser: formattedUser,
-                    rewardWithFile: {
-                        fileName: rewardWithFile.file_name,
-                        fileData: rewardWithFile.file_data,
-                    },
-                });
-            }
-        }
-
-        res.status(200).json({ updatedUser: formattedUser });
-
-    } catch (error) {
-        console.error('[REDEEM REWARD] ERROR:', error);
-        res.status(500).json({ message: "Error en el servidor al canjear la recompensa." });
-    }
-});
-
-const authAdminForRewards = async (req, res, next) => {
-    const { adminUserId } = req.body;
-    if (!adminUserId) return res.status(401).json({ message: 'Autenticación requerida.' });
-
-    try {
-        const [admins] = await db.query('SELECT role FROM users WHERE id = ?', [adminUserId]);
-        if (admins.length > 0 && (admins[0].role === 'dueño' || admins[0].role === 'moderador')) {
-            next();
-        } else {
-            res.status(403).json({ message: 'Acceso denegado.' });
-        }
-    } catch (error) {
-        res.status(500).json({ message: 'Error de servidor al verificar permisos.' });
-    }
-};
-
-app.post('/api/rewards', authAdminForRewards, async (req, res) => {
-    try {
-        const { id, title, description, cost, category, image, stock, fileName, fileData } = req.body;
-        if (!id || !title || !description || cost === undefined || !category || !image) {
-            return res.status(400).json({ message: 'Todos los campos son requeridos.' });
-        }
-        await db.query(
-            'INSERT INTO rewards (id, title, description, cost, category, image, stock, file_name, file_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [id, title, description, cost, category, image, stock != null ? stock : null, fileName, fileData]
-        );
-        res.status(201).json({ message: 'Recompensa creada.' });
-    } catch (error) {
-        console.error("[CREATE REWARD] ERROR:", error);
-        if (error.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ message: "Ya existe una recompensa con ese ID." });
-        }
-        res.status(500).json({ message: "Error al crear la recompensa." });
-    }
-});
-
-app.put('/api/rewards/:id', authAdminForRewards, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { title, description, cost, category, image, stock, fileName, fileData } = req.body;
-        if (!title || !description || cost === undefined || !category || !image) {
-            return res.status(400).json({ message: 'Faltan campos requeridos.' });
-        }
-        const [result] = await db.query(
-            'UPDATE rewards SET title = ?, description = ?, cost = ?, category = ?, image = ?, stock = ?, file_name = ?, file_data = ? WHERE id = ?',
-            [title, description, cost, category, image, stock != null ? stock : null, fileName, fileData, id]
-        );
-        if (result.affectedRows === 0) return res.status(404).json({ message: 'Recompensa no encontrada.' });
-        res.status(200).json({ message: 'Recompensa actualizada.' });
-    } catch (error) {
-        console.error("[UPDATE REWARD] ERROR:", error);
-        res.status(500).json({ message: "Error al actualizar la recompensa." });
-    }
-});
-
-app.delete('/api/rewards/:id', authAdminForRewards, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const [result] = await db.query('DELETE FROM rewards WHERE id = ?', [id]);
-        if (result.affectedRows === 0) return res.status(404).json({ message: 'Recompensa no encontrada.' });
-        res.status(200).json({ message: 'Recompensa eliminada.' });
-    } catch (error) {
-        console.error("[DELETE REWARD] ERROR:", error);
-        res.status(500).json({ message: "Error al eliminar la recompensa." });
-    }
-});
-
-
-// --- Puntos Verdes & Reports ---
-const updateLocationStatusAfterReportChange = async (locationId) => {
-    try {
-        const [[{ pending_count }]] = await db.query(
-            'SELECT COUNT(*) as pending_count FROM reports WHERE location_id = ? AND status = ?',
-            [locationId, 'pending']
-        );
-
-        if (Number(pending_count) === 0) {
-            console.log(`[Location Status] No hay reportes pendientes para ${locationId}. Actualizando a 'serviced'.`);
-            await db.query(
-                "UPDATE locations SET status = 'serviced', last_serviced = NOW() WHERE id = ? AND status = 'reported'",
-                [locationId]
-            );
-        } else {
-            console.log(`[Location Status] Aún hay ${pending_count} reportes pendientes para ${locationId}. El estado permanece 'reported'.`);
-        }
-    } catch (error) {
-        console.error(`[Location Status] Error al actualizar el estado de la ubicación ${locationId}:`, error);
-    }
-};
-
-app.get('/api/locations', async (req, res) => {
-    try {
-        const [locations] = await db.query(`
-            SELECT 
-                l.*, 
-                (SELECT COUNT(*) FROM reports WHERE location_id = l.id AND status = 'pending') as reportCount,
-                (SELECT reason FROM reports WHERE location_id = l.id AND status = 'pending' ORDER BY reported_at DESC LIMIT 1) as latestReportReason
-            FROM locations l
-        `);
-        const safeParseJson = (jsonString, fallbackValue) => {
-            try {
-                if (typeof jsonString === 'string') return JSON.parse(jsonString);
-                return fallbackValue
-            } catch {
-                return fallbackValue
-            }
+        return {
+             id: row.id,
+             type: row.type,
+             is_read: row.is_read,
+             time: row.time,
+             icon: '💬',
+             fromUser: data?.fromUser || 'Sistema',
+             channel: data?.channelName || 'general',
+             channelId: data?.channelId || 1,
+             messageId: data?.messageId || 0,
+             messageSnippet: data?.content || '',
+             repliedTo: data?.repliedTo || undefined
         };
-        const formattedLocations = locations.map(loc => ({
-            ...loc,
-            schedule: safeParseJson(loc.schedule, []) || [],
-            materials: safeParseJson(loc.materials, []) || [],
-            map_data: safeParseJson(loc.map_data, {}) || {},
-            image_urls: safeParseJson(loc.image_urls, []) || [],
-            reportCount: Number(loc.reportCount) || 0,
-            latestReportReason: loc.latestReportReason
-        }));
-        res.json(formattedLocations);
-    } catch(error) {
-        console.error("[GET LOCATIONS] ERROR:", error);
-        res.status(500).json({ message: "Error al obtener los puntos verdes." });
-    }
+    });
+    res.json(notifications);
 });
 
-app.post('/api/locations', async (req, res) => {
-    try {
-        const newLocation = req.body;
-        // Basic validation
-        if (!newLocation.id || !newLocation.name || !newLocation.address) {
-            return res.status(400).json({ message: 'ID, Nombre y Dirección son requeridos.' });
-        }
-        const [result] = await db.query(
-            'INSERT INTO locations (id, name, address, description, hours, schedule, materials, map_data, status, last_serviced, check_ins, image_urls) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [newLocation.id, newLocation.name, newLocation.address, newLocation.description, newLocation.hours, JSON.stringify(newLocation.schedule || []), JSON.stringify(newLocation.materials || []), JSON.stringify(newLocation.mapData || {}), newLocation.status || 'ok', newLocation.lastServiced || new Date(), 0, JSON.stringify(newLocation.imageUrls || [])]
-        );
-        const [insertedRow] = await db.query('SELECT * FROM locations WHERE id = ?', [newLocation.id]);
-        res.status(201).json(insertedRow[0]);
-    } catch(error) {
-        console.error("[CREATE LOCATION] ERROR:", error);
-        res.status(500).json({ message: "Error al crear la ubicación." });
-    }
-});
-
-app.put('/api/locations/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const updatedLocation = req.body;
-        // ... validation ...
-        await db.query(
-            'UPDATE locations SET name = ?, address = ?, description = ?, hours = ?, schedule = ?, materials = ?, map_data = ?, status = ?, last_serviced = ?, image_urls = ? WHERE id = ?',
-            [updatedLocation.name, updatedLocation.address, updatedLocation.description, updatedLocation.hours, JSON.stringify(updatedLocation.schedule), JSON.stringify(updatedLocation.materials), JSON.stringify(updatedLocation.mapData), updatedLocation.status, updatedLocation.lastServiced, JSON.stringify(updatedLocation.imageUrls), id]
-        );
-        const [updatedRow] = await db.query('SELECT * FROM locations WHERE id = ?', [id]);
-        res.status(200).json(updatedRow[0]);
-    } catch(error) {
-        console.error("[UPDATE LOCATION] ERROR:", error);
-        res.status(500).json({ message: "Error al actualizar la ubicación." });
-    }
-});
-
-app.delete('/api/locations/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        await db.query('DELETE FROM reports WHERE location_id = ?', [id]);
-        await db.query('DELETE FROM locations WHERE id = ?', [id]);
-        res.status(200).json({ message: 'Ubicación eliminada.' });
-    } catch(error) {
-        console.error("[DELETE LOCATION] ERROR:", error);
-        res.status(500).json({ message: "Error al eliminar la ubicación." });
-    }
-});
-
-app.post('/api/locations/report', async (req, res) => {
-    try {
-        const { locationId, userId, reason, comment, imageUrl } = req.body;
-        await db.query(
-            'INSERT INTO reports (user_id, location_id, reason, comment, image_url) VALUES (?, ?, ?, ?, ?)',
-            [userId, locationId, reason, comment, imageUrl]
-        );
-        await db.query("UPDATE locations SET status = 'reported' WHERE id = ?", [locationId]);
+app.get('/api/notifications/profile/:userId', async (req, res) => {
+    const [rows] = await db.query("SELECT id, type, data, created_at as time FROM notifications WHERE user_id = ? AND type IN ('achievement', 'points') ORDER BY created_at DESC", [req.params.userId]);
+    const notifications = rows.map(row => {
+        let data = {};
+        try { 
+            const parsed = typeof row.data === 'string' ? JSON.parse(row.data) : row.data; 
+            if (parsed) data = parsed;
+        } catch(e) {}
         
-        const [updatedLocations] = await db.query('SELECT * FROM locations WHERE id = ?', [locationId]);
-        res.status(201).json(updatedLocations[0]);
-    } catch (error) {
-        console.error("[REPORT LOCATION] ERROR:", error);
-        res.status(500).json({ message: "Error al enviar el reporte." });
-    }
-});
-
-// --- News Management ---
-app.get('/api/news', async (req, res) => {
-    try {
-        const [articles] = await db.query('SELECT * FROM news_articles ORDER BY published_at DESC, id DESC');
-        const safeParseJson = (jsonString, fallbackValue) => {
-            try {
-                if (typeof jsonString === 'string') return JSON.parse(jsonString);
-                return fallbackValue;
-            } catch {
-                return fallbackValue;
-            }
-        }
-        const formattedArticles = articles.map(article => {
-            const articleDate = new Date(article.published_at);
-            return {
-                ...article,
-                date: !isNaN(articleDate.getTime()) ? articleDate.toISOString().split('T')[0] : null,
-                content: safeParseJson(article.content, []) || [],
-            };
-        });
-        res.json(formattedArticles);
-    } catch (error) {
-        console.error("[GET NEWS] ERROR:", error);
-        res.status(500).json({ message: "Error al obtener las noticias." });
-    }
-});
-
-app.post('/api/news', async (req, res) => {
-    try {
-        const { title, category, image, excerpt, content, featured, adminUserId } = req.body;
-        const [result] = await db.query(
-            `INSERT INTO news_articles (title, category, image, excerpt, content, featured, author_id, published_at) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-            [title, category, image, excerpt, JSON.stringify(content), featured, adminUserId]
-        );
-        res.status(201).json({ id: result.insertId, message: 'Noticia creada.' });
-    } catch (error) {
-        console.error("[CREATE NEWS] ERROR:", error);
-        res.status(500).json({ message: "Error al crear la noticia." });
-    }
-});
-
-app.put('/api/news/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { title, category, image, excerpt, content, featured } = req.body;
-        await db.query(
-            `UPDATE news_articles SET title = ?, category = ?, image = ?, excerpt = ?, content = ?, featured = ?
-             WHERE id = ?`,
-            [title, category, image, excerpt, JSON.stringify(content), featured, id]
-        );
-        res.status(200).json({ message: 'Noticia actualizada.' });
-    } catch (error) {
-        console.error("[UPDATE NEWS] ERROR:", error);
-        res.status(500).json({ message: "Error al actualizar la noticia." });
-    }
-});
-
-app.delete('/api/news/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        await db.query('DELETE FROM news_articles WHERE id = ?', [id]);
-        res.status(200).json({ message: 'Noticia eliminada.' });
-    } catch (error) {
-        console.error("[DELETE NEWS] ERROR:", error);
-        res.status(500).json({ message: "Error al eliminar la noticia." });
-    }
-});
-
-// --- Games Management ---
-app.get('/api/games', async (req, res) => {
-    try {
-        const { userId } = req.query;
-        let games;
-        if (userId) {
-            const [result] = await db.query(
-                `SELECT g.*, ugs.high_score 
-                 FROM games g 
-                 LEFT JOIN user_game_scores ugs ON g.id = ugs.game_id AND ugs.user_id = ? 
-                 ORDER BY g.id ASC`, 
-                [userId]
-            );
-            games = result;
-        } else {
-            const [result] = await db.query('SELECT * FROM games ORDER BY id ASC');
-            games = result;
-        }
-        const safeParseJson = (jsonString, fallbackValue) => {
-            try {
-                if (typeof jsonString === 'string') return JSON.parse(jsonString);
-                return fallbackValue
-            } catch {
-                return fallbackValue
-            }
+        return {
+             id: row.id,
+             type: row.type,
+             time: row.time,
+             title: data?.title || (row.type === 'points' ? '¡Puntos ganados!' : '¡Logro Desbloqueado!'),
+             message: data?.message || '',
+             icon: data?.icon || (row.type === 'points' ? '✨' : '🏆')
         };
-        const formattedGames = games.map(g => ({
-            ...g,
-            payload: safeParseJson(g.payload, {}) || {},
-            userHighScore: g.high_score !== null && g.high_score !== undefined ? g.high_score : 0,
-        }));
-        res.json(formattedGames);
-    } catch (error) {
-        console.error('[GET GAMES] ERROR:', error);
-        res.status(500).json({ message: 'Error al obtener los juegos.' });
-    }
+    });
+    res.json(notifications);
 });
 
-app.post('/api/games', async (req, res) => {
-    try {
-        const { title, category, image, type, learningObjective, payload } = req.body;
-        const [result] = await db.query(
-            `INSERT INTO games (title, category, image, type, learningObjective, payload) VALUES (?, ?, ?, ?, ?, ?)`,
-            [title, category, image, type, learningObjective, JSON.stringify(payload)]
-        );
-        res.status(201).json({ id: result.insertId, message: 'Juego creado.' });
-    } catch (error) {
-        console.error('[CREATE GAME] ERROR:', error);
-        res.status(500).json({ message: 'Error al crear el juego.' });
-    }
+app.put('/api/notifications/mark-all-read/:userId', async (req, res) => {
+    await db.query('UPDATE notifications SET is_read = TRUE WHERE user_id = ?', [req.params.userId]);
+    res.sendStatus(200);
 });
 
-app.put('/api/games/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { title, category, image, type, learningObjective, payload } = req.body;
-        const [result] = await db.query(
-            `UPDATE games SET title = ?, category = ?, image = ?, type = ?, learningObjective = ?, payload = ? WHERE id = ?`,
-            [title, category, image, type, learningObjective, JSON.stringify(payload), id]
-        );
-        if (result.affectedRows === 0) return res.status(404).json({ message: 'Juego no encontrado.' });
-        res.status(200).json({ message: 'Juego actualizado.' });
-    } catch (error) {
-        console.error('[UPDATE GAME] ERROR:', error);
-        res.status(500).json({ message: 'Error al actualizar el juego.' });
-    }
-});
-
-app.delete('/api/games/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        await db.query('DELETE FROM user_game_scores WHERE game_id = ?', [id]);
-        const [result] = await db.query('DELETE FROM games WHERE id = ?', [id]);
-        if (result.affectedRows === 0) return res.status(404).json({ message: 'Juego no encontrado.' });
-        res.status(200).json({ message: 'Juego eliminado.' });
-    } catch (error) {
-        console.error('[DELETE GAME] ERROR:', error);
-        res.status(500).json({ message: 'Error al eliminar el juego.' });
-    }
-});
-
-
-// --- Community Endpoints ---
-const isAdmin = async (req, res, next) => {
-    const { userId, userRole } = req.body;
-    if (userRole === 'dueño' || userRole === 'moderador') {
-        return next();
-    }
-    if (userId) {
-        try {
-            const [users] = await db.query('SELECT role FROM users WHERE id = ?', [userId]);
-            if (users.length > 0 && (users[0].role === 'dueño' || users[0].role === 'moderador')) {
-                return next();
-            }
-        } catch (e) {
-            return res.status(500).json({ message: "Error de servidor." });
-        }
-    }
-    return res.status(403).json({ message: 'No tienes permiso para realizar esta acción.' });
-};
-
+// --- COMMUNITY ---
 app.get('/api/community/channels', async (req, res) => {
-    try {
-        const { userId } = req.query;
-        if (userId) {
-            const [channels] = await db.query(
-                `SELECT c.id, c.name, c.description, c.admin_only_write, COUNT(n.id) as unreadCount
-                 FROM community_channels c
-                 LEFT JOIN notifications n ON c.id = n.channel_id AND n.user_id = ? AND n.is_read = FALSE AND (n.type = 'mention' OR n.type = 'reply')
-                 GROUP BY c.id, c.name, c.description, c.admin_only_write
-                 ORDER BY c.id ASC`,
-                [userId]
-            );
-            res.json(channels.map(c => ({...c, unreadCount: Number(c.unreadCount)})));
-        } else {
-            const [channels] = await db.query('SELECT * FROM community_channels ORDER BY id ASC');
-            res.json(channels);
-        }
-    } catch (error) {
-        console.error('[GET CHANNELS] ERROR:', error);
-        res.status(500).json({ message: "Error al obtener canales." });
-    }
+    const [rows] = await db.query('SELECT * FROM community_channels');
+    res.json(rows.map(c => ({...c, unreadCount: 0})));
 });
 
-app.post('/api/community/channels', isAdmin, async (req, res) => {
+app.post('/api/community/channels', async (req, res) => {
+    const { name, description, admin_only_write } = req.body;
     try {
-        const { name, description, admin_only_write } = req.body;
-        if (!name || !description) return res.status(400).json({ message: 'Nombre y descripción son requeridos.' });
-        const channelName = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-        const [result] = await db.query(
-            'INSERT INTO community_channels (name, description, admin_only_write) VALUES (?, ?, ?)',
-            [channelName, description, !!admin_only_write]
-        );
-        res.status(201).json({ id: result.insertId, name: channelName, description, admin_only_write: !!admin_only_write });
-    } catch (error) {
-        console.error('[CREATE CHANNEL] ERROR:', error);
-        res.status(500).json({ message: "Error al crear canal." });
-    }
+        const [result] = await db.query('INSERT INTO community_channels (name, description, admin_only_write) VALUES (?, ?, ?)', [name, description, admin_only_write]);
+        res.status(201).json({ id: result.insertId, name, description, admin_only_write });
+    } catch (e) { res.status(500).json({ message: 'Error creating channel' }); }
 });
 
-app.delete('/api/community/channels/:id', isAdmin, async (req, res) => {
-    const channelId = parseInt(req.params.id, 10);
-    if (channelId === 1) return res.status(400).json({ message: 'No se puede eliminar el canal #general.' });
+app.delete('/api/community/channels/:id', async (req, res) => {
     try {
-        const [result] = await db.query('DELETE FROM community_channels WHERE id = ?', [channelId]);
-        if (result.affectedRows === 0) return res.status(404).json({ message: 'Canal no encontrado.' });
-        res.status(200).json({ message: 'Canal eliminado.' });
-    } catch (error) {
-        console.error(`[DELETE CHANNEL] Error:`, error);
-        res.status(500).json({ message: "Error al eliminar canal." });
-    }
+        await db.query('DELETE FROM community_channels WHERE id = ?', [req.params.id]);
+        res.sendStatus(200);
+    } catch (e) { res.status(500).json({ message: 'Error deleting channel' }); }
 });
-
 
 app.get('/api/community/members', async (req, res) => {
-     try {
-        const [members] = await db.query("SELECT id, name, profile_picture_url, role, last_active FROM users ORDER BY name");
-        const formattedMembers = members.map(m => ({
-            id: m.id.toString(),
-            name: m.name,
-            profile_picture_url: m.profile_picture_url,
-            is_admin: m.role === 'dueño' || m.role === 'moderador',
-            is_online: m.last_active ? (new Date() - new Date(m.last_active)) < (5 * 60 * 1000) : false
-        }));
-        res.json(formattedMembers);
-    } catch (error) {
-        console.error('[GET MEMBERS] Error:', error);
-        res.status(500).send('Server error');
-    }
+    const [rows] = await db.query('SELECT id, name, profile_picture_url, role FROM users');
+    const members = rows.map(u => ({
+        id: u.id,
+        name: u.name,
+        profile_picture_url: u.profile_picture_url,
+        is_admin: u.role === 'dueño' || u.role === 'moderador',
+        is_online: false 
+    }));
+    res.json(members);
 });
 
 app.get('/api/community/messages/:channelId', async (req, res) => {
-    try {
-        const { channelId } = req.params;
-        const [messages] = await db.query(
-            `SELECT 
-                m.id, m.user_id, m.content, m.created_at, m.edited, m.reactions, m.replying_to_message_id, m.image_url,
-                u.name as user, u.profile_picture_url as avatarUrl, u.role as userRole, u.title as userTitle
-             FROM community_messages m 
-             JOIN users u ON m.user_id = u.id 
-             WHERE m.channel_id = ? 
-             ORDER BY m.created_at ASC`, [channelId]
-        );
-        
-        const replyIds = messages.map(m => m.replying_to_message_id).filter(id => id);
-        let repliesMap = {};
-        if (replyIds.length > 0) {
-            const [replyMessages] = await db.query(
-                `SELECT m.id, m.content, u.name as user 
-                 FROM community_messages m 
-                 JOIN users u ON m.user_id = u.id 
-                 WHERE m.id IN (?)`, [replyIds]
-            );
-            repliesMap = replyMessages.reduce((acc, reply) => {
-                acc[reply.id] = { messageId: reply.id, user: reply.user, text: reply.content };
-                return acc;
-            }, {});
+    const [rows] = await db.query(`
+        SELECT m.*, u.name as user, u.profile_picture_url as avatarUrl, u.role as userRole, u.title as userTitle
+        FROM community_messages m
+        JOIN users u ON m.user_id = u.id
+        WHERE m.channel_id = ?
+        ORDER BY m.created_at ASC
+    `, [req.params.channelId]);
+    
+    const messages = await Promise.all(rows.map(async (msg) => {
+        let replyingTo = null;
+        if (msg.replying_to_message_id) {
+             const [replyRows] = await db.query('SELECT m.content, u.name FROM community_messages m JOIN users u ON m.user_id = u.id WHERE m.id = ?', [msg.replying_to_message_id]);
+             if (replyRows.length > 0) {
+                 replyingTo = { messageId: msg.replying_to_message_id, user: replyRows[0].name, text: replyRows[0].content };
+             }
         }
         
-        const safeParseJson = (jsonString, fallbackValue) => {
-            try {
-                if(typeof jsonString === 'string') return JSON.parse(jsonString);
-                return fallbackValue;
-            } catch {
-                return fallbackValue;
-            }
-        };
-
-        const formattedMessages = messages.map(msg => ({
+        return {
             id: msg.id,
-            user_id: msg.user_id.toString(),
+            user_id: msg.user_id,
             user: msg.user,
             avatarUrl: msg.avatarUrl,
+            userRole: msg.userRole,
+            userTitle: msg.userTitle,
             timestamp: msg.created_at,
             text: msg.content,
             imageUrl: msg.image_url,
             edited: msg.edited,
-            reactions: safeParseJson(msg.reactions, {}) || {},
-            replyingTo: msg.replying_to_message_id ? repliesMap[msg.replying_to_message_id] : null,
-            userRole: msg.userRole,
-            userTitle: msg.userTitle
-        }));
-        
-        res.json(formattedMessages);
-    } catch (error) {
-        console.error(`[GET MESSAGES] Error:`, error);
-        res.status(500).json({ message: 'Error al obtener mensajes.' });
-    }
+            reactions: typeof msg.reactions === 'string' ? JSON.parse(msg.reactions || '{}') : (msg.reactions || {}),
+            replyingTo
+        };
+    }));
+    
+    res.json(messages);
 });
 
 app.post('/api/community/messages', async (req, res) => {
-    try {
-        const { channelId, userId, content, replyingToId, imageUrl } = req.body;
-        const [result] = await db.query(
-            'INSERT INTO community_messages (channel_id, user_id, content, replying_to_message_id, image_url) VALUES (?, ?, ?, ?, ?)',
-            [channelId, userId, content, replyingToId || null, imageUrl || null]
-        );
-        const newMessageId = result.insertId;
+    const { channelId, userId, content, replyingToId, imageUrl } = req.body;
+    const [result] = await db.query(
+        'INSERT INTO community_messages (channel_id, user_id, content, replying_to_message_id, image_url) VALUES (?, ?, ?, ?, ?)',
+        [channelId, userId, content, replyingToId, imageUrl]
+    );
 
-        // If this is a reply, mark the original notification as read for the replier
-        if (replyingToId) {
-            try {
-                // Find notifications for the current user about the message they are replying to
-                // and mark them as read. This handles both mentions and replies.
-                await db.query(
-                    'UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND community_message_id = ? AND is_read = FALSE',
-                    [userId, replyingToId]
-                );
-                console.log(`[REPLY] Marked notification as read for user ${userId} regarding message ${replyingToId}.`);
-            } catch(e) {
-                console.error(`[REPLY] Failed to mark notification as read for user ${userId}:`, e);
-            }
-        }
-
-        const [allUsers] = await db.query('SELECT id, name FROM users');
-        const mentionedUserIds = new Set();
-        const currentUserId = parseInt(userId, 10);
-
-        allUsers.forEach(user => {
-            const mentionRegex = new RegExp(`@${user.name.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}(?!\\w)`, 'g');
-            if (content.match(mentionRegex)) {
-                if (user.id !== currentUserId) {
-                    mentionedUserIds.add(user.id);
-                }
-            }
-        });
-
-        for (const mentionedUserId of mentionedUserIds) {
-            await db.query(
-                'INSERT INTO notifications (user_id, type, related_user_id, community_message_id, channel_id) VALUES (?, ?, ?, ?, ?)',
-                [mentionedUserId, 'mention', currentUserId, newMessageId, channelId]
-            );
-        }
-
-        if (replyingToId) {
-            const [[originalMessage]] = await db.query('SELECT user_id FROM community_messages WHERE id = ?', [replyingToId]);
-            if (originalMessage) {
-                const originalAuthorId = originalMessage.user_id;
-                if (originalAuthorId !== currentUserId && !mentionedUserIds.has(originalAuthorId)) {
-                   await db.query(
-                       'INSERT INTO notifications (user_id, type, related_user_id, community_message_id, channel_id) VALUES (?, ?, ?, ?, ?)',
-                       [originalAuthorId, 'reply', currentUserId, newMessageId, channelId]
-                   );
+    // Check for mentions in content (@Name)
+    const mentions = content.match(/@(\w+(\s\w+)*)/g);
+    if (mentions) {
+        for (const mention of mentions) {
+            const name = mention.substring(1); // remove @
+            const [userRows] = await db.query('SELECT id FROM users WHERE name = ?', [name]);
+            if (userRows.length > 0) {
+                const targetUserId = userRows[0].id;
+                if (targetUserId !== userId) {
+                    // Fetch sender info for notification
+                    const [senderRows] = await db.query('SELECT name FROM users WHERE id = ?', [userId]);
+                    const [channelRows] = await db.query('SELECT name FROM community_channels WHERE id = ?', [channelId]);
+                    
+                    const notifData = {
+                        fromUser: senderRows[0].name,
+                        channelName: channelRows[0].name,
+                        channelId: channelId,
+                        messageId: result.insertId,
+                        content: content.substring(0, 50) + (content.length > 50 ? '...' : '')
+                    };
+                    
+                    await db.query("INSERT INTO notifications (user_id, type, data) VALUES (?, 'mention', ?)", [targetUserId, JSON.stringify(notifData)]);
                 }
             }
         }
-
-        res.status(201).json({ message: 'Mensaje enviado.' });
-    } catch (error) {
-        console.error("[POST MESSAGE] ERROR:", error);
-        res.status(500).json({ message: "Error al enviar el mensaje." });
-    }
-});
-
-app.put('/api/community/messages/:messageId', async (req, res) => {
-    try {
-        const { messageId } = req.params;
-        const { content, userId, userRole } = req.body;
-        
-        const [messages] = await db.query('SELECT user_id FROM community_messages WHERE id = ?', [messageId]);
-        if (messages.length === 0) return res.status(404).json({ message: 'Mensaje no encontrado.' });
-
-        const messageAuthorId = messages[0].user_id.toString();
-        if (messageAuthorId !== userId && userRole !== 'dueño' && userRole !== 'moderador') {
-            return res.status(403).json({ message: 'No tienes permiso para editar este mensaje.' });
-        }
-        
-        await db.query(
-            'UPDATE community_messages SET content = ?, edited = true WHERE id = ?',
-            [content, messageId]
-        );
-        res.status(200).json({ message: 'Mensaje actualizado.' });
-    } catch (error) {
-        console.error("[EDIT MESSAGE] ERROR:", error);
-        res.status(500).json({ message: "Error al editar el mensaje." });
-    }
-});
-
-app.delete('/api/community/messages/:messageId', async (req, res) => {
-    try {
-        const { messageId } = req.params;
-        const { userId, userRole } = req.body;
-        
-        const [messages] = await db.query('SELECT user_id FROM community_messages WHERE id = ?', [messageId]);
-        if (messages.length === 0) return res.status(404).json({ message: 'Mensaje no encontrado.' });
-
-        const messageAuthorId = messages[0].user_id.toString();
-        if (messageAuthorId !== userId && userRole !== 'dueño' && userRole !== 'moderador') {
-            return res.status(403).json({ message: 'No tienes permiso para eliminar este mensaje.' });
-        }
-        
-        await db.query('DELETE FROM notifications WHERE community_message_id = ?', [messageId]);
-        await db.query('DELETE FROM community_messages WHERE id = ?', [messageId]);
-        res.status(200).json({ message: 'Mensaje eliminado.' });
-    } catch (error) {
-        console.error("[DELETE MESSAGE] ERROR:", error);
-        res.status(500).json({ message: "Error al eliminar el mensaje." });
-    }
-});
-
-app.post('/api/community/messages/:messageId/react', async (req, res) => {
-    try {
-        const { messageId } = req.params;
-        const { userName, emoji } = req.body;
-
-        const [messages] = await db.query('SELECT reactions FROM community_messages WHERE id = ?', [messageId]);
-        if (messages.length === 0) return res.status(404).json({ message: 'Mensaje no encontrado.' });
-
-        const safeParseJson = (jsonString, fallbackValue) => {
-            try {
-                if(typeof jsonString === 'string') return JSON.parse(jsonString);
-                return fallbackValue;
-            } catch {
-                return fallbackValue;
-            }
-        };
-
-        let reactions = safeParseJson(messages[0].reactions, {}) || {};
-
-        if (!reactions[emoji]) {
-            reactions[emoji] = [];
-        }
-
-        const userIndex = reactions[emoji].findIndex((u) => u === userName);
-        if (userIndex > -1) {
-            reactions[emoji].splice(userIndex, 1);
-            if (reactions[emoji].length === 0) {
-                delete reactions[emoji];
-            }
-        } else {
-            reactions[emoji].push(userName);
-        }
-
-        await db.query(
-            'UPDATE community_messages SET reactions = ? WHERE id = ?',
-            [JSON.stringify(reactions), messageId]
-        );
-        res.status(200).json({ message: 'Reacción actualizada.' });
-    } catch (error) {
-        console.error("[REACT MESSAGE] ERROR:", error);
-        res.status(500).json({ message: "Error al reaccionar al mensaje." });
-    }
-});
-
-// --- Notification Endpoints ---
-app.get('/api/notifications/unread-count/:userId', async (req, res) => {
-    try {
-        const { userId } = req.params;
-        const [[{ totalUnread }]] = await db.query(
-            "SELECT COUNT(*) as totalUnread FROM notifications WHERE user_id = ? AND is_read = FALSE AND (type = 'mention' OR type = 'reply')",
-            [userId]
-        );
-        res.json({ totalUnread: Number(totalUnread) });
-    } catch (error) {
-        console.error('[GET UNREAD COUNT] ERROR:', error);
-        res.status(500).json({ message: "Error al obtener contador de no leídos." });
-    }
-});
-
-app.get('/api/notifications/profile/:userId', async (req, res) => {
-    try {
-        const { userId } = req.params;
-        const { allAchievements } = require('./data/achievementsData.js');
-
-        const [dbNotifications] = await db.query(
-            `SELECT id, achievement_id, created_at
-             FROM notifications
-             WHERE user_id = ? AND type = 'achievement'
-             ORDER BY created_at DESC`,
-            [userId]
-        );
-
-        const achievementsMap = new Map(allAchievements.map(ach => [ach.id, ach]));
-
-        const formattedNotifications = dbNotifications.map(n => {
-            const achievement = achievementsMap.get(n.achievement_id);
-            if (!achievement) return null;
-            return {
-                id: n.id,
-                type: 'achievement',
-                icon: achievement.icon,
-                title: '¡Logro Desbloqueado!',
-                message: `Conseguiste el logro: ${achievement.name}`,
-                time: n.created_at
-            };
-        }).filter(Boolean);
-
-        res.json(formattedNotifications);
-    } catch (error) {
-        console.error('[GET PROFILE NOTIFICATIONS] ERROR:', error);
-        res.status(500).json({ message: "Error al obtener notificaciones de perfil." });
-    }
-});
-
-
-app.get('/api/notifications/:userId', async (req, res) => {
-    try {
-        const { userId } = req.params;
-        const [notifications] = await db.query(
-            `SELECT
-                n.id,
-                n.type,
-                n.is_read,
-                n.created_at,
-                n.community_message_id as messageId,
-                n.channel_id as channelId,
-                related_user.name as fromUser,
-                cm.content as messageSnippet,
-                replied_cm.content as repliedTo,
-                ch.name as channel
-            FROM notifications n
-            LEFT JOIN users related_user ON n.related_user_id = related_user.id
-            LEFT JOIN community_messages cm ON n.community_message_id = cm.id
-            LEFT JOIN community_channels ch ON n.channel_id = ch.id
-            LEFT JOIN community_messages replied_cm ON cm.replying_to_message_id = replied_cm.id
-            WHERE n.user_id = ? AND (n.type = 'mention' OR n.type = 'reply')
-            ORDER BY n.created_at DESC`,
-            [userId]
-        );
-        const formatted = notifications.map(n => ({
-            id: n.id,
-            type: n.type,
-            is_read: !!n.is_read,
-            icon: n.type === 'mention' ? '@' : '💬',
-            fromUser: n.fromUser,
-            channel: n.channel,
-            channelId: n.channelId,
-            messageId: n.messageId,
-            messageSnippet: n.messageSnippet,
-            repliedTo: n.repliedTo || undefined,
-            time: n.created_at
-        }));
-        res.json(formatted);
-    } catch (error) {
-        console.error('[GET NOTIFICATIONS] ERROR:', error);
-        res.status(500).json({ message: "Error al obtener notificaciones." });
-    }
-});
-
-app.put('/api/notifications/mark-all-read/:userId', async (req, res) => {
-    try {
-        const { userId } = req.params;
-        await db.query(
-            "UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND (type = 'mention' OR type = 'reply')",
-            [userId]
-        );
-        res.status(200).json({ message: 'Notificaciones marcadas como leídas.' });
-    } catch (error) {
-        console.error('[MARK READ] ERROR:', error);
-        res.status(500).json({ message: "Error al marcar notificaciones como leídas." });
-    }
-});
-
-
-// --- Contact & Admin Panel Endpoints ---
-const checkAdminRole = (role, requiredRole) => {
-    if (requiredRole === 'dueño') return role === 'dueño';
-    if (requiredRole === 'moderador') return role === 'dueño' || role === 'moderador';
-    return false;
-};
-
-const authAdmin = async (req, res, requiredRole) => {
-    const adminUserId = req.query.adminUserId || req.body.adminUserId;
-    if (!adminUserId) {
-        res.status(401).json({ message: 'Se requiere autenticación de administrador.' });
-        return false;
-    }
-    try {
-        const [admins] = await db.query('SELECT role FROM users WHERE id = ?', [adminUserId]);
-        if (admins.length === 0 || !checkAdminRole(admins[0].role, requiredRole)) {
-            res.status(403).json({ message: 'Acceso denegado.' });
-            return false;
-        }
-        return true;
-    } catch (error) {
-        res.status(500).json({ message: 'Error de servidor al verificar permisos.' });
-        return false;
-    }
-};
-
-app.get('/api/admin/users', async (req, res) => {
-    if (!await authAdmin(req, res, 'dueño')) return;
-    try {
-        const [users] = await db.query('SELECT * FROM users ORDER BY name ASC');
-        res.json(users.map(formatUserForFrontend));
-    } catch (error) {
-        res.status(500).json({ message: 'Error al obtener usuarios.' });
-    }
-});
-
-app.get('/api/admin/users/:id', async (req, res) => {
-    if (!await authAdmin(req, res, 'dueño')) return;
-    try {
-        const [users] = await db.query('SELECT * FROM users WHERE id = ?', [req.params.id]);
-        if(users.length === 0) return res.status(404).json({message: 'Usuario no encontrado'});
-        res.json(formatUserForFrontend(users[0]));
-    } catch(error) {
-        res.status(500).json({ message: 'Error al obtener usuario.' });
-    }
-});
-
-app.put('/api/admin/users/:id', async (req, res) => {
-    if (!await authAdmin(req, res, 'dueño')) return;
-    try {
-        const { id } = req.params;
-        const { name, role, points } = req.body;
-        await db.query('UPDATE users SET name = ?, role = ?, points = ? WHERE id = ?', [name, role, points, id]);
-        const [updatedUsers] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
-        if (updatedUsers.length === 0) return res.status(404).json({ message: 'User not found after update.' });
-        res.status(200).json(formatUserForFrontend(updatedUsers[0]));
-    } catch (error) {
-        res.status(500).json({ message: 'Error al actualizar usuario.' });
-    }
-});
-
-app.delete('/api/admin/users/:id', async (req, res) => {
-    if (!await authAdmin(req, res, 'dueño')) return;
-    try {
-        const { id } = req.params;
-        await db.query('DELETE FROM community_messages WHERE user_id = ?', [id]);
-        await db.query('DELETE FROM reports WHERE user_id = ?', [id]);
-        await db.query('DELETE FROM users WHERE id = ?', [id]);
-        res.status(200).json({ message: 'Usuario eliminado permanentemente.' });
-    } catch (error) {
-        console.error("[DELETE USER] ERROR:", error);
-        res.status(500).json({ message: 'Error al eliminar usuario.' });
-    }
-});
-
-app.put('/api/admin/users/:id/achievements', async (req, res) => {
-    if (!await authAdmin(req, res, 'dueño')) return;
-    try {
-        const { id } = req.params;
-        const { achievementId, unlocked } = req.body;
-        const [users] = await db.query('SELECT unlocked_achievements FROM users WHERE id = ?', [id]);
-        if (users.length === 0) return res.status(404).json({ message: 'Usuario no encontrado.' });
-        
-        const safeParseJson = (jsonString, fallbackValue) => {
-            try {
-                if(typeof jsonString === 'string') return JSON.parse(jsonString);
-                return fallbackValue
-            } catch {
-                return fallbackValue
-            }
-        };
-        let unlockedIds = new Set(safeParseJson(users[0].unlocked_achievements, []) || []);
-        if (unlocked) {
-            unlockedIds.add(String(achievementId));
-        } else {
-            unlockedIds.delete(String(achievementId));
-        }
-        
-        await db.query('UPDATE users SET unlocked_achievements = ? WHERE id = ?', [JSON.stringify(Array.from(unlockedIds)), id]);
-        
-        const [updatedUsers] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
-        if (updatedUsers.length === 0) return res.status(404).json({ message: 'User not found after update.' });
-        res.status(200).json(formatUserForFrontend(updatedUsers[0]));
-
-    } catch (error) {
-        console.error("[UPDATE ACHIEVEMENTS] ERROR:", error);
-        res.status(500).json({ message: 'Error al actualizar logros.' });
-    }
-});
-
-
-app.post('/api/contact', async (req, res) => {
-    try {
-        const { name, email, subject, message } = req.body;
-        console.log(`[CONTACT] Nuevo mensaje de ${name} (${email}). Asunto: ${subject}`);
-        await db.query(
-            'INSERT INTO contact_messages (name, email, subject, message) VALUES (?, ?, ?, ?)',
-            [name, email, subject, message]
-        );
-        console.log('[CONTACT] Mensaje guardado en la DB.');
-        res.status(201).json({ message: 'Mensaje enviado exitosamente.' });
-    } catch (error) {
-        console.error("[CONTACT] ERROR:", error);
-        res.status(500).json({ message: "Error al enviar el mensaje." });
-    }
-});
-
-app.get('/api/admin/messages', async (req, res) => {
-    try {
-        const [messages] = await db.query('SELECT * FROM contact_messages ORDER BY submitted_at DESC');
-        res.json(messages);
-    } catch (error) {
-        console.error("[GET ADMIN MESSAGES] ERROR:", error);
-        res.status(500).json({ message: "Error al obtener mensajes." });
-    }
-});
-app.put('/api/admin/messages/:id', async (req, res) => {
-    if (!await authAdmin(req, res, 'moderador')) return;
-    try {
-        const { id } = req.params;
-        const { status } = req.body;
-        await db.query('UPDATE contact_messages SET status = ? WHERE id = ?', [status, id]);
-        const [updatedMessages] = await db.query('SELECT * FROM contact_messages WHERE id = ?', [id]);
-        if (updatedMessages.length === 0) return res.status(404).json({ message: 'Message not found after update.' });
-        res.status(200).json(updatedMessages[0]);
-    } catch (error) {
-         res.status(500).json({ message: "Error al actualizar mensaje." });
-    }
-});
-
-app.delete('/api/admin/messages/:id', async (req, res) => {
-    if (!await authAdmin(req, res, 'moderador')) return;
-    try {
-        const { id } = req.params;
-        await db.query('DELETE FROM contact_messages WHERE id = ?', [id]);
-        res.status(200).json({ message: 'Mensaje eliminado.' });
-    } catch (error) {
-        res.status(500).json({ message: 'Error al eliminar el mensaje.' });
-    }
-});
-
-app.get('/api/admin/reports', async (req, res) => {
-    if (!await authAdmin(req, res, 'moderador')) return;
-    try {
-        const [reports] = await db.query(
-            `SELECT r.*, u.name as userName, u.email as userEmail, l.name as locationName 
-             FROM reports r JOIN users u ON r.user_id = u.id 
-             JOIN locations l ON r.location_id = l.id 
-             ORDER BY r.reported_at DESC`
-        );
-        res.json(reports);
-    } catch (error) {
-        console.error("[GET ADMIN REPORTS] ERROR:", error);
-        res.status(500).json({ message: "Error al obtener reportes." });
-    }
-});
-app.put('/api/admin/reports/:id', async (req, res) => {
-     if (!await authAdmin(req, res, 'moderador')) return;
-     try {
-        const { id } = req.params;
-        const { status } = req.body;
-        
-        const [reports] = await db.query('SELECT location_id FROM reports WHERE id = ?', [id]);
-        if (reports.length === 0) return res.status(404).json({ message: 'Reporte no encontrado.' });
-        const { location_id } = reports[0];
-        
-        await db.query('UPDATE reports SET status = ? WHERE id = ?', [status, id]);
-
-        if (status === 'resolved' || status === 'dismissed') {
-            await updateLocationStatusAfterReportChange(location_id);
-        }
-
-        const [updatedReports] = await db.query(
-            `SELECT r.*, u.name as userName, u.email as userEmail, l.name as locationName 
-             FROM reports r JOIN users u ON r.user_id = u.id 
-             JOIN locations l ON r.location_id = l.id 
-             WHERE r.id = ?`,
-            [id]
-        );
-        if (updatedReports.length === 0) return res.status(404).json({ message: 'Report not found after update.' });
-        res.status(200).json(updatedReports[0]);
-    } catch (error) {
-         res.status(500).json({ message: "Error al actualizar reporte." });
-    }
-});
-
-app.delete('/api/admin/reports/:id', async (req, res) => {
-    if (!await authAdmin(req, res, 'moderador')) return;
-    try {
-        const { id } = req.params;
-        const [reports] = await db.query('SELECT location_id FROM reports WHERE id = ?', [id]);
-        if (reports.length === 0) return res.status(404).json({ message: 'Reporte no encontrado.' });
-        const { location_id } = reports[0];
-
-        await db.query('DELETE FROM reports WHERE id = ?', [id]);
-        await updateLocationStatusAfterReportChange(location_id);
-        
-        res.status(200).json({ message: 'Reporte eliminado.' });
-    } catch (error) {
-        res.status(500).json({ message: 'Error al eliminar el mensaje.' });
-    }
-});
-
-app.post('/api/admin/reply', async (req, res) => {
-    const { to, subject, body, adminUserId } = req.body;
-    console.log('\n[ADMIN REPLY] Solicitud de respuesta recibida.');
-
-    if (!await authAdmin(req, res, 'moderador')) return;
-
-    if (!to || !subject || !body) {
-        console.log('[ADMIN REPLY] Error: Faltan campos (to, subject, body).');
-        return res.status(400).json({ message: 'Faltan campos requeridos para enviar la respuesta.' });
     }
     
-    if (!transporter) {
-        console.log('****************************************************');
-        console.log('***     SIMULANDO ENVÍO DE EMAIL (NO CONFIG)     ***');
-        console.log('****************************************************');
-        console.log(`PARA: ${to}, ASUNTO: ${subject}`);
-        console.log('-------------------- CUERPO --------------------');
-        console.log(body);
-        console.log('****************************************************');
-        return res.status(200).json({ message: 'Respuesta enviada (simulación). Configura las variables de entorno de email para enviar correos reales.' });
+    // Check for replies
+    if (replyingToId) {
+         const [msgRows] = await db.query('SELECT user_id, content FROM community_messages WHERE id = ?', [replyingToId]);
+         if (msgRows.length > 0 && msgRows[0].user_id !== userId) {
+            const [senderRows] = await db.query('SELECT name FROM users WHERE id = ?', [userId]);
+            const [channelRows] = await db.query('SELECT name FROM community_channels WHERE id = ?', [channelId]);
+
+             const notifData = {
+                fromUser: senderRows[0].name,
+                channelName: channelRows[0].name,
+                channelId: channelId,
+                messageId: result.insertId,
+                content: content.substring(0, 50) + (content.length > 50 ? '...' : ''),
+                repliedTo: msgRows[0].content.substring(0, 30) + '...'
+            };
+            await db.query("INSERT INTO notifications (user_id, type, data) VALUES (?, 'reply', ?)", [msgRows[0].user_id, JSON.stringify(notifData)]);
+         }
     }
 
-    const mailOptions = {
-        from: process.env.EMAIL_FROM || '"EcoGestión" <no-reply@ecogestion.com>',
-        to: to,
-        subject: subject,
-        html: `<p>Hola,</p><p>Has recibido una respuesta de EcoGestión:</p><blockquote style="border-left: 2px solid #ccc; padding-left: 1rem; margin-left: 0;">${body.replace(/\n/g, '<br>')}</blockquote><p>Si tienes más preguntas, puedes responder a este correo.</p>`,
-        text: `Hola,\n\nHas recibido una respuesta de EcoGestión:\n\n${body}\n\nSi tienes más preguntas, puedes responder a este correo.`,
-    };
+    res.sendStatus(201);
+});
 
-    try {
-        console.log(`[ADMIN REPLY] Intentando enviar email a ${to}...`);
-        await transporter.sendMail(mailOptions);
-        console.log(`[ADMIN REPLY] Email enviado exitosamente a ${to}.`);
-        res.status(200).json({ message: 'Respuesta enviada exitosamente.' });
-    } catch (error) {
-        console.error('----------------------------------------------------');
-        console.error('>>> [ADMIN REPLY] ¡ERROR AL ENVIAR EL EMAIL! <<<');
-        console.error('----------------------------------------------------');
-        console.error(error);
-        console.error('----------------------------------------------------');
-        res.status(500).json({ message: 'Error en el servidor al enviar el email. Revisa la consola del backend.' });
+app.put('/api/community/messages/:id', async (req, res) => {
+    const { content } = req.body;
+    await db.query('UPDATE community_messages SET content = ?, edited = TRUE WHERE id = ?', [content, req.params.id]);
+    res.sendStatus(200);
+});
+
+app.delete('/api/community/messages/:id', async (req, res) => {
+    await db.query('DELETE FROM community_messages WHERE id = ?', [req.params.id]);
+    res.sendStatus(200);
+});
+
+app.post('/api/community/messages/:id/react', async (req, res) => {
+    const { userName, emoji } = req.body;
+    const [rows] = await db.query('SELECT reactions FROM community_messages WHERE id = ?', [req.params.id]);
+    if(rows.length === 0) return res.sendStatus(404);
+    
+    let reactions = {};
+    try { reactions = JSON.parse(rows[0].reactions || '{}'); } catch(e) {}
+    
+    if (!reactions[emoji]) reactions[emoji] = [];
+    
+    if (reactions[emoji].includes(userName)) {
+        reactions[emoji] = reactions[emoji].filter(u => u !== userName);
+        if (reactions[emoji].length === 0) delete reactions[emoji];
+    } else {
+        reactions[emoji].push(userName);
     }
+    
+    await db.query('UPDATE community_messages SET reactions = ? WHERE id = ?', [JSON.stringify(reactions), req.params.id]);
+    res.sendStatus(200);
 });
 
 
-// --- Impact Stats Endpoints ---
-app.get('/api/impact-stats', async (req, res) => {
+// --- REWARDS ---
+app.get('/api/rewards', async (req, res) => {
+    const [rows] = await db.query('SELECT * FROM rewards');
+    res.json(rows);
+});
+
+app.post('/api/redeem-reward', async (req, res) => {
+    const { userId, rewardId } = req.body;
+    
+    const connection = await db.getConnection();
     try {
-        const [rows] = await db.query('SELECT * FROM impact_stats WHERE id = 1');
+        await connection.beginTransaction();
         
-        if (rows.length === 0) {
-            console.warn("[GET IMPACT STATS] Fila no encontrada. Creando...");
-            await db.query(`INSERT INTO impact_stats (id, recycled_kg, participants, points) VALUES (1, 14800, 5350, 48);`);
-            const [newRows] = await db.query('SELECT * FROM impact_stats WHERE id = 1');
-            res.json({ recycledKg: newRows[0].recycled_kg, participants: newRows[0].participants, points: newRows[0].points });
-            return;
+        const [userRows] = await connection.query('SELECT points FROM users WHERE id = ?', [userId]);
+        const [rewardRows] = await connection.query('SELECT * FROM rewards WHERE id = ?', [rewardId]);
+        
+        if (userRows.length === 0 || rewardRows.length === 0) throw new Error('Usuario o recompensa no encontrados');
+        
+        const user = userRows[0];
+        const reward = rewardRows[0];
+        
+        if (user.points < reward.cost) throw new Error('Puntos insuficientes');
+        if (reward.stock !== null && reward.stock <= 0) throw new Error('Sin stock');
+        
+        // Deduct points
+        await connection.query('UPDATE users SET points = points - ? WHERE id = ?', [reward.cost, userId]);
+        
+        // Reduce stock
+        if (reward.stock !== null) {
+            await connection.query('UPDATE rewards SET stock = stock - 1 WHERE id = ?', [rewardId]);
         }
-
-        const stats = rows[0];
-        res.json({
-            recycledKg: stats.recycled_kg,
-            participants: stats.participants,
-            points: stats.points
-        });
-    } catch (error) {
-        console.error("[GET IMPACT STATS] ERROR:", error);
-        res.status(500).json({ message: "Error al obtener las estadísticas." });
-    }
-});
-
-
-app.put('/api/impact-stats', async (req, res) => {
-    if (!await authAdmin(req, res, 'moderador')) return;
-    try {
-        const { recycledKg, participants, points } = req.body;
-        if (recycledKg === undefined || participants === undefined || points === undefined) {
-            return res.status(400).json({ message: 'Todos los campos de estadísticas son requeridos.' });
-        }
-        const [result] = await db.query(
-            'UPDATE impact_stats SET recycled_kg = ?, participants = ?, points = ? WHERE id = 1',
-            [recycledKg, participants, points]
+        
+        // Create redemption record
+        const code = Math.random().toString(36).substring(2, 10).toUpperCase();
+        const expiresAt = new Date();
+        expiresAt.setHours(expiresAt.getHours() + (reward.coupon_duration_value * (reward.coupon_duration_unit === 'días' ? 24 : 1)));
+        
+        await connection.query(
+            'INSERT INTO user_redeemed_rewards (user_id, reward_id, code, expires_at) VALUES (?, ?, ?, ?)',
+            [userId, rewardId, code, expiresAt]
         );
-
-        if (result.affectedRows === 0) {
-            throw new Error("La fila de estadísticas no se encontró en la base de datos para actualizar. Intenta reiniciar el servidor.");
-        }
-
-        res.status(200).json({ message: 'Estadísticas actualizadas correctamente.' });
-    } catch (error) {
-        console.error("[UPDATE IMPACT STATS] ERROR:", error);
-        res.status(500).json({ message: "Error al actualizar las estadísticas." });
-    }
-});
-
-
-// --- Recycling Guide Endpoint ---
-app.get('/api/recycling-guides', async (req, res) => {
-    res.json(comoReciclarData);
-});
-
-// --- Start Server ---
-const startServer = async () => {
-    try {
-        console.log('⏳ Inicializando la base de datos...');
-        await initializeDatabase();
         
-        app.listen(port, () => {
-            console.log(`🚀 Servidor de EcoGestión escuchando en http://localhost:${port}`);
-            console.log('✅ Base de datos y servidor listos.');
-        });
+        await connection.commit();
+        
+        const updatedUser = await getUserById(userId);
+        const rewardWithFile = reward.category === 'Digital' ? { fileName: reward.file_name, fileData: reward.file_data } : null;
+        
+        res.json({ updatedUser, rewardWithFile });
+        
     } catch (error) {
-        console.error('❌ FATAL: No se pudo iniciar el servidor. La inicialización de la base de datos falló.');
-        process.exit(1);
+        await connection.rollback();
+        res.status(400).json({ message: error.message });
+    } finally {
+        connection.release();
     }
+});
+
+app.get('/api/users/:id/redeemed-rewards', async (req, res) => {
+    const [rows] = await db.query(`
+        SELECT ur.*, r.title as rewardTitle, r.image as rewardImage, r.category 
+        FROM user_redeemed_rewards ur 
+        JOIN rewards r ON ur.reward_id = r.id 
+        WHERE ur.user_id = ? 
+        ORDER BY ur.created_at DESC
+    `, [req.params.id]);
+    
+    const formatted = rows.map(r => ({
+        id: r.id,
+        rewardTitle: r.rewardTitle,
+        rewardImage: r.rewardImage,
+        code: r.code,
+        status: new Date() > new Date(r.expires_at) && r.status === 'active' ? 'expired' : r.status,
+        expiresAt: r.expires_at
+    }));
+    
+    res.json(formatted);
+});
+
+app.put('/api/users/:id/achievements', async (req, res) => {
+     const { achievementId, unlocked } = req.body;
+     const userId = req.params.id;
+     const user = await getUserById(userId);
+     if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
+     
+     const currentAchievements = new Set(user.achievements.filter(a => a.unlocked).map(a => a.id));
+     if (unlocked) currentAchievements.add(achievementId);
+     else currentAchievements.delete(achievementId);
+     
+     await db.query('UPDATE users SET unlocked_achievements = ? WHERE id = ?', [JSON.stringify(Array.from(currentAchievements)), userId]);
+     res.json(await getUserById(userId));
+});
+
+// --- ADMIN ENDPOINTS ---
+// Middleware mock for admin check - in production use JWT
+const checkAdmin = async (req, res, next) => {
+    const adminId = req.query.adminUserId || req.body.adminUserId;
+    if (!adminId) return res.status(403).json({ message: 'No autorizado' });
+    const user = await getUserById(adminId);
+    if (user && (user.role === 'dueño' || user.role === 'moderador')) next();
+    else res.status(403).json({ message: 'No tienes permisos de administrador' });
 };
 
-startServer();
+app.get('/api/admin/messages', checkAdmin, async (req, res) => {
+    try {
+        const [rows] = await db.query('SELECT * FROM contact_messages ORDER BY submitted_at DESC');
+        res.json(rows);
+    } catch (e) { res.status(500).json({ message: 'Error DB Mensajes' }); }
+});
+
+app.get('/api/admin/reports', checkAdmin, async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT r.*, u.name as userName, l.name as locationName 
+            FROM reports r 
+            JOIN users u ON r.user_id = u.id 
+            JOIN locations l ON r.location_id = l.id 
+            ORDER BY r.reported_at DESC
+        `);
+        res.json(rows);
+    } catch (e) { console.error(e); res.status(500).json({ message: 'Error DB Reportes' }); }
+});
+
+app.get('/api/admin/users', checkAdmin, async (req, res) => {
+    try {
+        const [rows] = await db.query('SELECT id, name, email, role, points FROM users');
+        res.json(rows);
+    } catch (e) { res.status(500).json({ message: 'Error DB Usuarios' }); }
+});
+
+app.post('/api/contact', async (req, res) => {
+    const { name, email, subject, message } = req.body;
+    try {
+        await db.query('INSERT INTO contact_messages (name, email, subject, message) VALUES (?, ?, ?, ?)', [name, email, subject, message]);
+        res.status(201).json({ message: 'Mensaje enviado' });
+    } catch (e) { res.status(500).json({ message: 'Error enviando mensaje' }); }
+});
+
+// --- Generic Update Status ---
+app.put('/api/admin/messages/:id', checkAdmin, async (req, res) => {
+    const { status } = req.body;
+    await db.query('UPDATE contact_messages SET status = ? WHERE id = ?', [status, req.params.id]);
+    const [updated] = await db.query('SELECT * FROM contact_messages WHERE id = ?', [req.params.id]);
+    res.json(updated[0]);
+});
+
+app.put('/api/admin/reports/:id', checkAdmin, async (req, res) => {
+    const { status } = req.body;
+    await db.query('UPDATE reports SET status = ? WHERE id = ?', [status, req.params.id]);
+    const [updated] = await db.query(`
+        SELECT r.*, u.name as userName, l.name as locationName 
+        FROM reports r 
+        JOIN users u ON r.user_id = u.id 
+        JOIN locations l ON r.location_id = l.id 
+        WHERE r.id = ?`, [req.params.id]);
+    res.json(updated[0]);
+});
+
+// Admin Delete Endpoints
+app.delete('/api/admin/messages/:id', checkAdmin, async (req, res) => {
+    await db.query('DELETE FROM contact_messages WHERE id = ?', [req.params.id]);
+    res.sendStatus(200);
+});
+
+app.delete('/api/admin/reports/:id', checkAdmin, async (req, res) => {
+    await db.query('DELETE FROM reports WHERE id = ?', [req.params.id]);
+    res.sendStatus(200);
+});
+
+app.delete('/api/admin/users/:id', checkAdmin, async (req, res) => {
+    await db.query('DELETE FROM users WHERE id = ?', [req.params.id]);
+    res.sendStatus(200);
+});
+
+// Admin Update User
+app.put('/api/admin/users/:id', checkAdmin, async (req, res) => {
+    const { name, role, points } = req.body;
+    const updates = [];
+    const params = [];
+    if(name) { updates.push('name = ?'); params.push(name); }
+    if(role) { updates.push('role = ?'); params.push(role); }
+    if(points !== undefined) { updates.push('points = ?'); params.push(points); }
+    
+    if(updates.length > 0) {
+        params.push(req.params.id);
+        await db.query(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+    }
+    res.json(await getUserById(req.params.id));
+});
+
+// Admin Manage Achievements of specific user
+app.put('/api/admin/users/:id/achievements', checkAdmin, async (req, res) => {
+     const { achievementId, unlocked } = req.body;
+     const userId = req.params.id;
+     const user = await getUserById(userId);
+     if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
+     
+     const currentAchievements = new Set(user.achievements.filter(a => a.unlocked).map(a => a.id));
+     if (unlocked) currentAchievements.add(achievementId);
+     else currentAchievements.delete(achievementId);
+     
+     await db.query('UPDATE users SET unlocked_achievements = ? WHERE id = ?', [JSON.stringify(Array.from(currentAchievements)), userId]);
+     res.json(await getUserById(userId));
+});
+
+// Report creation from frontend
+app.post('/api/locations/report', async (req, res) => {
+    const { locationId, userId, reason, comment, imageUrl } = req.body;
+    try {
+        const [result] = await db.query(
+            'INSERT INTO reports (location_id, user_id, reason, comment, image_url) VALUES (?, ?, ?, ?, ?)',
+            [locationId, userId, reason, comment, imageUrl]
+        );
+        
+        // Update location status to 'reported'
+        await db.query('UPDATE locations SET status = ?, reportCount = reportCount + 1, latestReportReason = ? WHERE id = ?', ['reported', reason, locationId]);
+        
+        const [updatedLoc] = await db.query('SELECT * FROM locations WHERE id = ?', [locationId]);
+        res.json(updatedLoc[0]);
+    } catch (e) { res.status(500).json({ message: 'Error creating report' }); }
+});
+
+// Location management
+app.post('/api/locations', async (req, res) => {
+    const loc = req.body;
+    await db.query(
+        'INSERT INTO locations (id, name, address, description, hours, schedule, materials, map_data, status, check_ins, image_urls) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [loc.id, loc.name, loc.address, loc.description, loc.hours, JSON.stringify(loc.schedule), JSON.stringify(loc.materials), JSON.stringify(loc.mapData), loc.status, loc.checkIns, JSON.stringify(loc.imageUrls)]
+    );
+    res.sendStatus(201);
+});
+
+app.put('/api/locations/:id', async (req, res) => {
+    const loc = req.body;
+    await db.query(
+        'UPDATE locations SET name=?, address=?, description=?, hours=?, materials=?, map_data=?, status=?, image_urls=? WHERE id=?',
+        [loc.name, loc.address, loc.description, loc.hours, JSON.stringify(loc.materials), JSON.stringify(loc.mapData), loc.status, JSON.stringify(loc.imageUrls), req.params.id]
+    );
+    res.sendStatus(200);
+});
+
+app.delete('/api/locations/:id', async (req, res) => {
+    await db.query('DELETE FROM locations WHERE id=?', [req.params.id]);
+    res.sendStatus(200);
+});
+
+// News management
+app.post('/api/news', async (req, res) => {
+    const n = req.body;
+    await db.query(
+        'INSERT INTO news_articles (title, category, excerpt, image, content, featured) VALUES (?, ?, ?, ?, ?, ?)',
+        [n.title, n.category, n.excerpt, n.image, JSON.stringify(n.content), n.featured]
+    );
+    res.sendStatus(201);
+});
+
+app.put('/api/news/:id', async (req, res) => {
+    const n = req.body;
+    await db.query(
+        'UPDATE news_articles SET title=?, category=?, excerpt=?, image=?, content=?, featured=? WHERE id=?',
+        [n.title, n.category, n.excerpt, n.image, JSON.stringify(n.content), n.featured, req.params.id]
+    );
+    res.sendStatus(200);
+});
+
+app.delete('/api/news/:id', async (req, res) => {
+    await db.query('DELETE FROM news_articles WHERE id=?', [req.params.id]);
+    res.sendStatus(200);
+});
+
+// Rewards Management
+app.post('/api/rewards', async (req, res) => {
+    const r = req.body;
+    await db.query(
+        'INSERT INTO rewards (id, title, description, cost, category, image, stock, file_name, file_data, coupon_duration_value, coupon_duration_unit) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [r.id, r.title, r.description, r.cost, r.category, r.image, r.stock, r.fileName, r.fileData, r.couponDurationValue, r.couponDurationUnit]
+    );
+    res.sendStatus(201);
+});
+
+app.put('/api/rewards/:id', async (req, res) => {
+    const r = req.body;
+    await db.query(
+        'UPDATE rewards SET title=?, description=?, cost=?, category=?, image=?, stock=?, file_name=?, file_data=?, coupon_duration_value=?, coupon_duration_unit=? WHERE id=?',
+        [r.title, r.description, r.cost, r.category, r.image, r.stock, r.fileName, r.fileData, r.couponDurationValue, r.couponDurationUnit, req.params.id]
+    );
+    res.sendStatus(200);
+});
+
+app.delete('/api/rewards/:id', async (req, res) => {
+    await db.query('DELETE FROM rewards WHERE id=?', [req.params.id]);
+    res.sendStatus(200);
+});
+
+// Stats Update
+app.put('/api/impact-stats', checkAdmin, async (req, res) => {
+    const { recycledKg, participants, points } = req.body;
+    await db.query('UPDATE impact_stats SET recycled_kg=?, participants=?, points=? WHERE id=1', [recycledKg, participants, points]);
+    res.sendStatus(200);
+});
+
+// Games Management
+app.post('/api/games', async (req, res) => {
+    const g = req.body;
+    const [result] = await db.query(
+        'INSERT INTO games (title, category, image, type, learningObjective, payload) VALUES (?, ?, ?, ?, ?, ?)',
+        [g.title, g.category, g.image, g.type, g.learningObjective, JSON.stringify(g.payload)]
+    );
+    res.sendStatus(201);
+});
+
+app.put('/api/games/:id', async (req, res) => {
+    const g = req.body;
+    await db.query(
+        'UPDATE games SET title=?, category=?, image=?, type=?, learningObjective=?, payload=? WHERE id=?',
+        [g.title, g.category, g.image, g.type, g.learningObjective, JSON.stringify(g.payload), req.params.id]
+    );
+    res.sendStatus(200);
+});
+
+app.delete('/api/games/:id', async (req, res) => {
+    await db.query('DELETE FROM games WHERE id=?', [req.params.id]);
+    res.sendStatus(200);
+});

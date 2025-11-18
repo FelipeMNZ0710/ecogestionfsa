@@ -23,7 +23,7 @@ const FeaturedNewsCarousel: React.FC<FeaturedNewsCarouselProps> = ({ articles, o
 
     useEffect(() => {
         if (!isHovering) {
-            const slideInterval = setInterval(nextSlide, 7000); // A bit longer for news
+            const slideInterval = setInterval(nextSlide, 4000); // A bit longer for news
             return () => clearInterval(slideInterval);
         }
     }, [nextSlide, isHovering]);

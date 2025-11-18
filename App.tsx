@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useEffect } from 'react';
 import Layout from './components/Layout';
 import HomePage from './pages/HomePage';
@@ -22,8 +23,21 @@ const App: React.FC = () => {
   const [viewingProfileId, setViewingProfileId] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(() => {
     try {
-      const savedUser = localStorage.getItem('ecoUser');
-      return savedUser ? JSON.parse(savedUser) : null;
+      const savedUserStr = localStorage.getItem('ecoUser');
+      if (!savedUserStr) return null;
+      
+      const savedUser = JSON.parse(savedUserStr);
+      
+      // FIX: Migrate legacy snake_case properties to camelCase for frontend compatibility immediately on load
+      if (savedUser) {
+         if (savedUser.profile_picture_url && !savedUser.profilePictureUrl) {
+             savedUser.profilePictureUrl = savedUser.profile_picture_url;
+         }
+         if (savedUser.banner_url && !savedUser.bannerUrl) {
+             savedUser.bannerUrl = savedUser.banner_url;
+         }
+      }
+      return savedUser;
     } catch (error) {
       console.error("Failed to parse user from localStorage", error);
       return null;
@@ -62,6 +76,31 @@ const App: React.FC = () => {
     fetchUnreadCount();
   }, [fetchUnreadCount]);
 
+  // NEW: Refresh user data in background on mount to ensure consistency (image, points, etc.)
+  useEffect(() => {
+      const refreshUser = async () => {
+          if (user?.id) {
+              try {
+                  const response = await fetch(`http://localhost:3001/api/users/profile/${user.id}`);
+                  if (response.ok) {
+                      const freshData = await response.json();
+                      setUser(prev => {
+                          // Only update if data changed to avoid unnecessary re-renders
+                          if (JSON.stringify(prev) !== JSON.stringify(freshData)) {
+                              return freshData;
+                          }
+                          return prev;
+                      });
+                  }
+              } catch (e) {
+                  console.error("Background user refresh failed", e);
+              }
+          }
+      };
+      refreshUser();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run once on mount
+
 
   useEffect(() => {
     try {
@@ -84,7 +123,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleUserAction = useCallback(async (action: GamificationAction, payload?: any) => {
-    if (!user) return; // Admins can now earn achievements, so restriction removed.
+    if (!user) return; 
 
     // Daily login check remains on client to prevent unnecessary API calls
     if (action === 'daily_login') {

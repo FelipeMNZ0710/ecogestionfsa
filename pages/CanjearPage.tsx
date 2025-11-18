@@ -19,7 +19,7 @@ const fileToBase64 = (file: File): Promise<string> => {
     });
 };
 
-const optimizeImage = (base64Str: string, maxWidth = 600, maxHeight = 600, quality = 0.8): Promise<string> => {
+const optimizeImage = (base64Str: string, maxWidth = 300, maxHeight = 300, quality = 0.7): Promise<string> => {
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.src = base64Str;
@@ -62,8 +62,8 @@ const RewardEditModal: React.FC<{
     onSave: (reward: Omit<Reward, 'id'> & { id?: string }) => void;
     reward: Reward | null;
 }> = ({ isOpen, onClose, onSave, reward }) => {
-    const [formData, setFormData] = useState<Omit<Reward, 'id' | 'fileData'> & { id?: string; fileData?: string | null; fileName?: string | null }>({
-        title: '', description: '', cost: 0, category: 'Productos', image: '', stock: undefined, fileName: null, fileData: null
+    const [formData, setFormData] = useState<Omit<Reward, 'id' | 'fileData'> & { id?: string; fileData?: string | null; fileName?: string | null; couponDurationValue?: number; couponDurationUnit?: 'horas' | 'días' }>({
+        title: '', description: '', cost: 0, category: 'Productos', image: '', stock: undefined, fileName: null, fileData: null, couponDurationValue: 24, couponDurationUnit: 'horas'
     });
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -71,9 +71,16 @@ const RewardEditModal: React.FC<{
     useEffect(() => {
         if (isOpen) {
             if (reward) {
-                setFormData({ ...reward, stock: reward.stock ?? undefined, fileData: null, fileName: reward.fileName });
+                setFormData({ 
+                    ...reward, 
+                    stock: reward.stock ?? undefined, 
+                    fileData: null, 
+                    fileName: reward.fileName,
+                    couponDurationValue: reward.couponDurationValue || 24,
+                    couponDurationUnit: reward.couponDurationUnit || 'horas',
+                });
             } else {
-                setFormData({ title: '', description: '', cost: 100, category: 'Productos', image: '', stock: undefined, fileName: null, fileData: null });
+                setFormData({ title: '', description: '', cost: 100, category: 'Productos', image: '', stock: undefined, fileName: null, fileData: null, couponDurationValue: 24, couponDurationUnit: 'horas' });
             }
             setSelectedFile(null);
         }
@@ -84,7 +91,7 @@ const RewardEditModal: React.FC<{
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
         
-        if (name === 'stock' || name === 'cost') {
+        if (name === 'stock' || name === 'cost' || name === 'couponDurationValue') {
             const sanitizedValue = value.replace(/[^0-9]/g, ''); // Allow only digits
 
             if (name === 'stock') {
@@ -93,11 +100,11 @@ const RewardEditModal: React.FC<{
                 } else {
                     setFormData(prev => ({ ...prev, stock: parseInt(sanitizedValue, 10) }));
                 }
-            } else if (name === 'cost') {
-                if (sanitizedValue === '') {
-                    setFormData(prev => ({ ...prev, cost: 0 })); // Default to 0 if empty
+            } else {
+                 if (sanitizedValue === '') {
+                    setFormData(prev => ({ ...prev, [name]: 0 }));
                 } else {
-                    setFormData(prev => ({ ...prev, cost: parseInt(sanitizedValue, 10) }));
+                    setFormData(prev => ({ ...prev, [name]: parseInt(sanitizedValue, 10) }));
                 }
             }
         } else {
@@ -183,6 +190,19 @@ const RewardEditModal: React.FC<{
                                 <div><label>Categoría</label>
                                     <select name="category" value={formData.category} onChange={handleChange} required>
                                         {allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label>Duración del Cupón</label>
+                                    <input type="number" name="couponDurationValue" value={formData.couponDurationValue || ''} onChange={handleChange} placeholder="24" />
+                                </div>
+                                <div>
+                                    <label>Unidad de Duración</label>
+                                    <select name="couponDurationUnit" value={formData.couponDurationUnit || 'horas'} onChange={handleChange}>
+                                        <option value="horas">Horas</option>
+                                        <option value="días">Días</option>
                                     </select>
                                 </div>
                             </div>
@@ -395,7 +415,7 @@ const CanjearPage: React.FC<CanjearPageProps> = ({ user, onUserUpdate, addNotifi
             addNotification({
                 type: 'achievement',
                 title: '¡Canje Exitoso!',
-                message: `Has canjeado "${selectedReward.title}".`,
+                message: 'Revisa la sección "Mis Cupones" en tu perfil.',
                 icon: '🛍️',
             });
             fetchRewards(); // Re-fetch to update stock

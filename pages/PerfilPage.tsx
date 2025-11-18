@@ -1,9 +1,49 @@
-import React, { useState, useEffect, useRef } from 'react';
-import type { User, Achievement, Page } from '../types';
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import type { User, Achievement, Page, RedeemedReward } from '../types';
 import ProfileAvatar from '../components/ProfileAvatar';
 import AchievementsModal from '../components/AchievementsModal';
 
 // --- Helper Components & Data ---
+
+const CountdownTimer: React.FC<{ expiryDate: string }> = React.memo(({ expiryDate }) => {
+    const calculateTimeLeft = useCallback(() => {
+        const difference = +new Date(expiryDate) - +new Date();
+        if (difference <= 0) return null;
+
+        return {
+            h: Math.floor(difference / (1000 * 60 * 60)),
+            m: Math.floor((difference / 1000 / 60) % 60),
+            s: Math.floor((difference / 1000) % 60),
+        };
+    }, [expiryDate]);
+
+    const [timeLeft, setTimeLeft] = useState(calculateTimeLeft());
+
+    useEffect(() => {
+        if (!timeLeft) return;
+
+        // Use a single timeout that re-triggers the effect, which is safer than setInterval for dynamic components.
+        const timer = setTimeout(() => {
+            setTimeLeft(calculateTimeLeft());
+        }, 1000);
+
+        return () => clearTimeout(timer);
+    }, [timeLeft, calculateTimeLeft]);
+
+    if (!timeLeft) {
+        return <span>Expirado</span>;
+    }
+
+    const { h, m, s } = timeLeft;
+    const parts = [];
+    if (h > 0) parts.push(String(h).padStart(2, '0'));
+    parts.push(String(m).padStart(2, '0'));
+    parts.push(String(s).padStart(2, '0'));
+
+    return <span>{parts.join(':')}</span>;
+});
+
 
 const ProfileEditModal: React.FC<{
     isOpen: boolean;
@@ -171,6 +211,7 @@ const PerfilPage: React.FC<PerfilPageProps> = ({ user, updateUser, setCurrentPag
     const [profileData, setProfileData] = useState<User | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [redeemedRewards, setRedeemedRewards] = useState<RedeemedReward[]>([]);
     
     const [isAchievementsModalOpen, setIsAchievementsModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -182,42 +223,90 @@ const PerfilPage: React.FC<PerfilPageProps> = ({ user, updateUser, setCurrentPag
     const isOwnProfile = !viewingProfileId || viewingProfileId === user?.id;
 
     useEffect(() => {
-        const fetchProfile = async () => {
-            if (!viewingProfileId) return;
+        let isCancelled = false;
+        
+        const fetchProfile = async (id: string) => {
+            if (isCancelled) return;
             setIsLoading(true);
             setError(null);
+            setProfileData(null);
+            setRedeemedRewards([]);
+
             try {
-                const response = await fetch(`http://localhost:3001/api/users/profile/${viewingProfileId}`);
-                
-                const contentType = response.headers.get("content-type");
-                if (!response.ok || !contentType || !contentType.includes("application/json")) {
-                    const errorText = await response.text();
-                    try {
-                        const errorData = JSON.parse(errorText);
-                        throw new Error(errorData.message || 'Perfil no encontrado.');
-                    } catch {
-                        throw new Error("El servidor devolvió una respuesta inesperada. Esto puede deberse a un error general de la aplicación.");
-                    }
-                }
-                
+                const response = await fetch(`http://localhost:3001/api/users/profile/${id}`);
+                if (!response.ok) throw new Error('Perfil no encontrado o error en el servidor.');
                 const data = await response.json();
-                setProfileData(data);
+                if (!isCancelled) {
+                    setProfileData(data);
+                }
             } catch (err) {
-                console.error(err);
-                setError(err instanceof Error ? err.message : 'No se pudo cargar el perfil.');
-                setProfileData(null);
+                if (!isCancelled) {
+                    setError(err instanceof Error ? err.message : 'No se pudo cargar el perfil.');
+                }
             } finally {
-                setIsLoading(false);
+                if (!isCancelled) {
+                    setIsLoading(false);
+                }
+            }
+        };
+
+        const setupOwnProfile = async () => {
+            if (!user) { 
+                if(!isCancelled) {
+                    setIsLoading(false);
+                    setProfileData(null);
+                }
+                return;
+            }
+             if (isCancelled) return;
+
+            setIsLoading(true);
+            try {
+                // Fetch fresh profile data from server to ensure achievements and stats are up to date
+                // instead of relying on potentially stale 'user' prop from localStorage.
+                const [profileRes, rewardsRes] = await Promise.all([
+                    fetch(`http://localhost:3001/api/users/profile/${user.id}`),
+                    fetch(`http://localhost:3001/api/users/${user.id}/redeemed-rewards`)
+                ]);
+
+                if (profileRes.ok) {
+                    const profile = await profileRes.json();
+                    if (!isCancelled) setProfileData(profile);
+                } else {
+                    // Fallback
+                    if (!isCancelled) setProfileData(user);
+                }
+
+                if (rewardsRes.ok) {
+                    const rewards = await rewardsRes.json();
+                    if (!isCancelled) setRedeemedRewards(rewards);
+                }
+            } catch (error) {
+                console.error("Failed to fetch profile/rewards:", error);
+                // Ensure we at least show something if fetch fails but we have user prop
+                if (!isCancelled && !profileData) {
+                     setProfileData(user);
+                }
+            } finally {
+                 if (!isCancelled) {
+                    setIsLoading(false);
+                }
             }
         };
 
         if (isOwnProfile) {
-            setProfileData(user);
-            setIsLoading(false);
-            setError(null);
+            setupOwnProfile();
+        } else if (viewingProfileId) {
+            fetchProfile(viewingProfileId);
         } else {
-            fetchProfile();
+            setIsLoading(false);
+            setProfileData(null);
+            setError("No se ha especificado un perfil para ver.");
         }
+
+        return () => {
+            isCancelled = true;
+        };
     }, [viewingProfileId, user, isOwnProfile]);
 
 
@@ -269,6 +358,7 @@ const PerfilPage: React.FC<PerfilPageProps> = ({ user, updateUser, setCurrentPag
             const updatedUserFromServer = await response.json();
             
             updateUser(updatedUserFromServer);
+            setProfileData(updatedUserFromServer); // Update local state too
             setIsEditModalOpen(false);
             setCroppingState({ isOpen: false, imageSrc: null, aspect: 1, type: 'avatar' });
 
@@ -289,6 +379,7 @@ const PerfilPage: React.FC<PerfilPageProps> = ({ user, updateUser, setCurrentPag
             if (!response.ok) throw new Error('Falló la actualización de logros');
             const updatedUserFromServer = await response.json();
             updateUser(updatedUserFromServer);
+            setProfileData(updatedUserFromServer); // Update local state
         } catch (error) {
             console.error("Error toggling achievement:", error);
             alert("No se pudo actualizar el logro.");
@@ -321,10 +412,24 @@ const PerfilPage: React.FC<PerfilPageProps> = ({ user, updateUser, setCurrentPag
     };
     
     const isAdminMode = user?.role === 'dueño' || user?.role === 'moderador';
-    const { name: levelName, icon: levelIcon } = getUserLevel(profileData.points);
-    const { nextLevel, progress, pointsToNext } = getNextLevelInfo(profileData.points);
-    const unlockedAchievementsCount = profileData.achievements.filter(a => a.unlocked).length;
-    const latestUnlocked = profileData.achievements.filter(a => a.unlocked).slice(-4).reverse();
+    
+    // --- SAFE ACCESS TO PROPERTIES ---
+    // This block ensures that even if backend sends nulls, we have defaults.
+    const points = profileData.points || 0;
+    const kgRecycled = profileData.kgRecycled || 0;
+    const achievements = profileData.achievements || [];
+    const name = profileData.name || 'Usuario';
+    const title = profileData.title || '';
+    const bio = profileData.bio || '';
+    const bannerUrl = profileData.bannerUrl || 'https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?q=80&w=800&auto=format&fit=crop';
+    const profilePictureUrl = profileData.profilePictureUrl;
+    
+    const { name: levelName, icon: levelIcon } = getUserLevel(points);
+    const { nextLevel, progress, pointsToNext } = getNextLevelInfo(points);
+    
+    const unlockedAchievementsCount = achievements.filter(a => a.unlocked).length;
+    const totalAchievementsCount = achievements.length;
+    const latestUnlocked = achievements.filter(a => a.unlocked).slice(-4).reverse();
     
     return (
         <>
@@ -350,7 +455,7 @@ const PerfilPage: React.FC<PerfilPageProps> = ({ user, updateUser, setCurrentPag
                 <div className="max-w-4xl mx-auto p-4 sm:p-6 lg:p-8 space-y-8">
                     
                     <div className="profile-header-card animate-fade-in-up">
-                        <div className="profile-banner" style={{backgroundImage: `url(${profileData.bannerUrl || 'https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?q=80&w=800&auto=format&fit=crop'})`}}>
+                        <div className="profile-banner" style={{backgroundImage: `url(${bannerUrl})`}}>
                             {isOwnProfile && (
                                 <div className="edit-overlay" onClick={() => { fileInputRef.current?.setAttribute('data-type', 'banner'); fileInputRef.current?.click(); }} title="Cambiar banner">
                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
@@ -361,7 +466,7 @@ const PerfilPage: React.FC<PerfilPageProps> = ({ user, updateUser, setCurrentPag
                         <div className="relative p-6 flex flex-col sm:flex-row items-center sm:items-end gap-6">
                             <div className="profile-avatar-wrapper flex-shrink-0">
                                 {isOwnProfile && <input type="file" ref={fileInputRef} onChange={(e) => handleFileChange(e, e.target.getAttribute('data-type') as 'avatar' | 'banner')} className="hidden" accept="image/png, image/jpeg, image/webp" />}
-                                {profileData.profilePictureUrl ? <img src={profileData.profilePictureUrl} alt="Foto de perfil" className="profile-avatar" /> : <div className="profile-avatar bg-surface"><ProfileAvatar /></div>}
+                                {profilePictureUrl ? <img src={profilePictureUrl} alt="Foto de perfil" className="profile-avatar" /> : <div className="profile-avatar bg-surface"><ProfileAvatar /></div>}
                                 <div className="profile-level-badge" title={levelName}>{levelIcon}</div>
                                 {isOwnProfile && (
                                     <div className="edit-overlay rounded-full" onClick={() => { fileInputRef.current?.setAttribute('data-type', 'avatar'); fileInputRef.current?.click(); }} title="Cambiar foto de perfil">
@@ -370,9 +475,9 @@ const PerfilPage: React.FC<PerfilPageProps> = ({ user, updateUser, setCurrentPag
                                 )}
                             </div>
                             <div className="flex-1 text-center sm:text-left">
-                                <h1 className="text-3xl font-bold font-display text-text-main">{profileData.name}</h1>
-                                <p className="text-primary font-semibold">{profileData.title || levelName}</p>
-                                <p className="text-sm text-text-secondary mt-2 max-w-md">{profileData.bio || '¡Un miembro activo de la comunidad EcoGestión!'}</p>
+                                <h1 className="text-3xl font-bold font-display text-text-main">{name}</h1>
+                                <p className="text-primary font-semibold">{title || levelName}</p>
+                                <p className="text-sm text-text-secondary mt-2 max-w-md">{bio || '¡Un miembro activo de la comunidad EcoGestión!'}</p>
                             </div>
                             <div className="flex-shrink-0">
                                 {isOwnProfile ? (
@@ -406,21 +511,21 @@ const PerfilPage: React.FC<PerfilPageProps> = ({ user, updateUser, setCurrentPag
                         <div className="stat-card">
                             <div className="stat-icon bg-primary/20 text-primary">✨</div>
                             <div>
-                                <div className="stat-value">{profileData.points.toLocaleString('es-AR')}</div>
+                                <div className="stat-value">{points.toLocaleString('es-AR')}</div>
                                 <div className="stat-label">EcoPuntos</div>
                             </div>
                         </div>
                         <div className="stat-card">
                             <div className="stat-icon bg-emerald-500/20 text-emerald-400">♻️</div>
                             <div>
-                                <div className="stat-value">{profileData.kgRecycled.toLocaleString('es-AR')}</div>
+                                <div className="stat-value">{kgRecycled.toLocaleString('es-AR')}</div>
                                 <div className="stat-label">Kilos Reciclados</div>
                             </div>
                         </div>
                         <div className="stat-card">
                             <div className="stat-icon bg-amber-500/20 text-amber-400">🏆</div>
                             <div>
-                                <div className="stat-value">{unlockedAchievementsCount} / {profileData.achievements.length}</div>
+                                <div className="stat-value">{unlockedAchievementsCount} / {totalAchievementsCount}</div>
                                 <div className="stat-label">Logros</div>
                             </div>
                         </div>
@@ -459,6 +564,46 @@ const PerfilPage: React.FC<PerfilPageProps> = ({ user, updateUser, setCurrentPag
                             </div>
                         </div>
                     </div>
+                    
+                    {isOwnProfile && (
+                        <div className="animate-fade-in-up" style={{ animationDelay: '500ms' }}>
+                             <h2 className="text-2xl font-bold font-display text-text-main mb-4">Mis Cupones</h2>
+                             {redeemedRewards.length > 0 ? (
+                                <div className="grid md:grid-cols-2 gap-6">
+                                    {redeemedRewards.map(reward => {
+                                        const statusInfo = {
+                                            active: { text: 'Activo', color: 'bg-emerald-500/20 text-emerald-300' },
+                                            used: { text: 'Canjeado', color: 'bg-slate-700 text-slate-400' },
+                                            expired: { text: 'Expirado', color: 'bg-red-500/20 text-red-400' },
+                                        };
+                                        return (
+                                             <div key={reward.id} className={`modern-card p-4 flex gap-4 ${reward.status !== 'active' ? 'opacity-60' : ''}`}>
+                                                <img src={reward.rewardImage} alt={reward.rewardTitle} className="w-24 h-24 object-cover rounded-md flex-shrink-0" />
+                                                <div className="flex flex-col flex-grow">
+                                                    <div className="flex justify-between items-start">
+                                                        <p className="font-bold text-text-main pr-2">{reward.rewardTitle}</p>
+                                                        <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${statusInfo[reward.status].color}`}>{statusInfo[reward.status].text}</span>
+                                                    </div>
+                                                    <p className="text-sm font-mono bg-background px-2 py-1 rounded my-2 text-text-secondary tracking-widest">{reward.code}</p>
+                                                    <div className="mt-auto text-sm text-text-secondary">
+                                                        {reward.status === 'active' ? (
+                                                            <span>Expira en: <strong className="text-amber-400"><CountdownTimer expiryDate={reward.expiresAt} /></strong></span>
+                                                        ) : (
+                                                            <span>Expiró el: {new Date(reward.expiresAt).toLocaleDateString()}</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                             ) : (
+                                <div className="modern-card text-center p-8">
+                                    <p className="text-text-secondary">Aún no has canjeado ninguna recompensa. ¡Sigue participando para ganar EcoPuntos y visita la <button onClick={() => setCurrentPage('canjear')} className="text-primary font-bold hover:underline">Tienda de Recompensas</button>!</p>
+                                </div>
+                             )}
+                        </div>
+                    )}
 
                 </div>
             </div>

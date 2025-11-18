@@ -1,3 +1,5 @@
+
+
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import type { User, Game, GamificationAction, GameType, QuizQuestion, MemoryCardData, SortableItemData, HangmanWord, BinType } from '../types';
 import TriviaGame from '../components/games/TriviaGame';
@@ -7,6 +9,7 @@ import HangmanGame from '../components/games/HangmanGame';
 import RecyclingChainGame from '../components/games/RecyclingChainGame';
 import WasteCatcherGame from '../components/games/WasteCatcherGame';
 import RepairItGame from '../components/games/RepairItGame';
+import ClasificadorArrastrable from '../components/games/ClasificadorArrastrable'; // Imported
 import EcoQuizGame from '../components/games/EcoQuizGame';
 import FindTheIntruderGame from '../components/games/FindTheIntruderGame';
 import RecyclingPathGame from '../components/games/RecyclingPathGame';
@@ -100,6 +103,7 @@ const GamePlayer: React.FC<{
             case 'chain': return <RecyclingChainGame items={payload.items || []} bins={payload.bins || []} duration={payload.duration || 90} {...props} />;
             case 'catcher': return <WasteCatcherGame items={payload.fallingItems || []} lives={payload.lives || 3} {...props} />;
             case 'repair': return <RepairItGame items={payload.repairableItems || []} timePerItem={payload.timePerItem || 15} {...props} />;
+            case 'clasificador': return <ClasificadorArrastrable {...props} />; // Added
             
             // New Placeholder Games
             case 'eco-quiz': return <EcoQuizGame {...props} />;
@@ -147,7 +151,7 @@ const GameEditModal: React.FC<{
     const [payload, setPayload] = useState<Game['payload']>({ points: 0 });
 
     const allGameTypes: GameType[] = [
-        'trivia', 'memory', 'sorting', 'hangman', 'chain', 'catcher', 'repair',
+        'trivia', 'memory', 'sorting', 'hangman', 'chain', 'catcher', 'repair', 'clasificador',
         'eco-quiz', 'find-the-intruder', 'recycling-path', 'river-cleaner', 'compost-sequence',
         'myth-busters', 'concept-connector', 'water-saver', 'eco-wordle', 'sustainable-builder',
         'energy-impact', 'nature-sounds', 'spot-the-difference'
@@ -184,6 +188,7 @@ const GameEditModal: React.FC<{
                 case 'chain': setPayload({ points: 80, duration: 90, items: [], bins: ['plastico', 'papel', 'vidrio', 'metales', 'organico'] }); break;
                 case 'catcher': setPayload({ points: 70, lives: 3, fallingItems: [] }); break;
                 case 'repair': setPayload({ points: 65, timePerItem: 15, repairableItems: [] }); break;
+                case 'clasificador': setPayload({ points: 100 }); break;
                 default: setPayload({ points: 50 }); break;
             }
         }

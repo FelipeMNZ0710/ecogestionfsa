@@ -1,3 +1,4 @@
+
 import React from 'react';
 import type { ChatMessage, Page } from '../types';
 import { marked } from 'marked';
@@ -13,10 +14,12 @@ const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({ message, onNaviga
     const showTypingIndicator = message.sender === 'bot' && message.text === '' && !message.isLoading;
 
     const botAvatar = (
-        <div className="w-8 h-8 rounded-full bg-primary flex-shrink-0 flex items-center justify-center" title="Ecobot">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#FFFFFF" className="w-5 h-5">
-                <path fillRule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25ZM9 12a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm3-1.5a1.5 1.5 0 1 0-3 0 1.5 1.5 0 0 0 3 0Zm3 1.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0ZM12 17.25c.39 0 .771.045 1.137.127a.75.75 0 0 1 .533.933l-.36 1.343a.75.75 0 0 1-1.46-.39l.234-.875a8.25 8.25 0 0 0-1.228 0l.234.875a.75.75 0 0 1-1.46.39l-.36-1.343a.75.75 0 0 1 .533-.933A9.76 9.76 0 0 1 12 17.25Z" clipRule="evenodd" />
-            </svg>
+        <div className="w-8 h-8 rounded-full bg-primary flex-shrink-0 flex items-center justify-center overflow-hidden" title="Ecobot">
+            <img 
+                src="https://cdn.discordapp.com/attachments/1435059807135596566/1440459315197644850/dise_o_de_la_cara_de_un_bot-removebg-preview.png?ex=691e3bc7&is=691cea47&hm=070eaa8d7916b08123839b2ece378c93ee01a1fec9628d31f7223fa2424dcc19&" 
+                alt="Ecobot" 
+                className="w-full h-full object-cover p-1" 
+            />
         </div>
     );
 

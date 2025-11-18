@@ -1,5 +1,3 @@
-
-
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import type { Page, User } from '../types';
 import TestimonialsCarousel from '../components/TestimonialsCarousel';
@@ -41,7 +39,6 @@ const AnimatedNumber: React.FC<{ value: number }> = ({ value }) => {
         if (start === end) return;
 
         const duration = 800; // Faster animation
-        const range = end - start;
         let startTime: number | null = null;
 
         const animate = (timestamp: number) => {
@@ -50,7 +47,7 @@ const AnimatedNumber: React.FC<{ value: number }> = ({ value }) => {
             
             const easeOutProgress = 1 - Math.pow(1 - progress, 3);
 
-            const newCount = Math.floor(start + range * easeOutProgress);
+            const newCount = Math.floor(start + (end - start) * easeOutProgress);
             setCount(newCount);
 
             if (progress < 1) {
@@ -87,8 +84,10 @@ const FAQItem = ({ question, answer }: { question: string, answer: string }) => 
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
             </span>
         </summary>
-        <div className="pt-3 text-text-secondary">
-            <p>{answer}</p>
+        <div className="faq-content-wrapper">
+          <div className="pt-3 text-text-secondary">
+              <p>{answer}</p>
+          </div>
         </div>
     </details>
 );
@@ -218,7 +217,7 @@ const HomePage: React.FC<{setCurrentPage: (page: Page, params?: { userId?: strin
     <div className="w-full">
       <StatsEditModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} stats={impactStats} onSave={handleSaveStats} user={user} />
       {/* Hero Section */}
-      <section className="relative h-screen text-white overflow-hidden">
+      <section className="relative h-[75vh] text-white overflow-hidden">
         <div className="absolute inset-0 bg-black">
             <div className="absolute inset-0 bg-cover bg-center opacity-40" style={{ backgroundImage: "url('https://images.unsplash.com/photo-1532996122724-e3c354a0b15b?q=80&w=2070&auto=format&fit=crop')" }}></div>
         </div>

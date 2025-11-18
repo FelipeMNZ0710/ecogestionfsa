@@ -1,8 +1,15 @@
+
+const initialChannels = [
+    { id: 1, name: 'general', description: 'Charlas generales' },
+    { id: 2, name: 'dudas', description: 'Preguntas sobre reciclaje' },
+    { id: 3, name: 'anuncios', description: 'Anuncios importantes', admin_only_write: true },
+];
+
 const initialMessages = {
     // channelId: messages[]
     1: [ // #general
         { id: 101, user_id: 3, content: 'Hola a todos! Nueva por acá. Quería saber si alguien tiene ideas para reutilizar frascos de vidrio.', created_at: new Date(Date.now() - 1000 * 60 * 25) },
-        { id: 102, user_id: 1, content: '¡Bienvenida, María! Yo los uso para guardar legumbres y especias. También como vasos o para hacer velas. 😊', reactions: {'😊': ['Carlos Giménez']}, created_at: new Date(Date.now() - 1000 * 60 * 23) },
+        { id: 102, user_id: 1, content: '¡Bienvenida, María! Yo los uso para guardar legumbres y especias. También como vasos o para hacer velas. 😊', reactions: JSON.stringify({'😊': ['Carlos Giménez']}), created_at: new Date(Date.now() - 1000 * 60 * 23) },
         { id: 103, user_id: 3, content: '¡Qué buenas ideas! Gracias, Laura.', created_at: new Date(Date.now() - 1000 * 60 * 22) },
         { id: 104, user_id: 4, content: 'Che, alguien sabe si la jornada de limpieza del sábado se hace igual si llueve?', replying_to_message_id: 102, created_at: new Date(Date.now() - 1000 * 60 * 10) },
     ],
@@ -15,4 +22,4 @@ const initialMessages = {
     ]
 };
 
-module.exports = { initialMessages };
+module.exports = { initialChannels, initialMessages };
